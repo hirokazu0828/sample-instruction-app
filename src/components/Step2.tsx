@@ -276,29 +276,30 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
             }),
           });
 
-          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            console.error("API error response:", errBody);
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
           const resData = await response.json();
           
           let imageUrl = '';
-          const item = resData.data?.[0];
-          if (item?.b64_json) {
-            // base64の場合
-            imageUrl = `data:image/png;base64,${item.b64_json}`;
-          } else if (item?.url) {
-            // URLの場合（フォールバック）
-            imageUrl = item.url;
+          const b64 = resData?.data?.[0]?.b64_json;
+          if (b64) {
+            imageUrl = `data:image/png;base64,${b64}`;
+          } else if (resData?.data?.[0]?.url) {
+            imageUrl = resData.data[0].url;
           } else {
-            // その他のフォールバック (既存互換性)
-            imageUrl = resData.imageUrl || resData.url || resData.image || (typeof resData === 'string' ? resData : '');
+            // Error handling if response shape is entirely unexpected
+            console.error("Unexpected API response format:", resData);
+            throw new Error('Invalid or empty image data returned from API');
           }
           
-          if (typeof imageUrl === 'string' && (imageUrl.startsWith('http') || imageUrl.startsWith('data:image'))) {
+          if (imageUrl) {
             currentImages[angleId] = imageUrl;
             // Update step-by-step
             updateData({ generatedImages: { ...currentImages } });
             setGeneratingStatus(prev => ({ ...prev, [angleId]: 'done' }));
-          } else {
-            throw new Error('Invalid image URL');
           }
         } catch (e) {
           console.error(`Error generating ${angleId}:`, e);
