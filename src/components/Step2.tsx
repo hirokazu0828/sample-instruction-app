@@ -260,20 +260,31 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       
       const basePrompt = `A highly detailed professional product photograph of a golf putter cover. Shape: ${data.headShape || 'standard'}, Color: ${pColor}, Fabric material: ${pFabric}, Piping: ${pPiping}, Hardware Finish: ${pHardware}. Studio lighting, clean white background, high quality, 8k resolution.`;
 
-      for (const angleId of selectedAngles) {
+      const anglesToProcess = [...selectedAngles].sort((a, b) => a === 'front' ? -1 : (b === 'front' ? 1 : 0));
+      let currentFrontB64 = '';
+      if (currentImages['front']) {
+        currentFrontB64 = currentImages['front'].replace(/^data:image\/\w+;base64,/, '');
+      }
+
+      for (const angleId of anglesToProcess) {
         const option = angleOptions.find(o => o.id === angleId);
         if (!option) continue;
         
         setGeneratingStatus(prev => ({ ...prev, [angleId]: 'loading' }));
         
         try {
+          let reqBody: any = { 
+            prompt: `${basePrompt}, ${option.prompt}`,
+            quality: data.imageQuality || 'medium'
+          };
+          if (angleId !== 'front' && currentFrontB64) {
+             reqBody.imageBase64 = currentFrontB64;
+          }
+
           const response = await fetch('/api/generate-image', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              prompt: `${basePrompt}, ${option.prompt}`,
-              quality: data.imageQuality || 'medium'
-            }),
+            body: JSON.stringify(reqBody),
           });
 
           if (!response.ok) {
@@ -287,10 +298,12 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           const b64 = resData?.data?.[0]?.b64_json;
           if (b64) {
             imageUrl = `data:image/png;base64,${b64}`;
+            if (angleId === 'front') {
+              currentFrontB64 = b64; // Save for subsequent edits
+            }
           } else if (resData?.data?.[0]?.url) {
             imageUrl = resData.data[0].url;
           } else {
-            // Error handling if response shape is entirely unexpected
             console.error("Unexpected API response format:", resData);
             throw new Error('Invalid or empty image data returned from API');
           }
