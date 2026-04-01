@@ -16,7 +16,6 @@ export default async function handler(req: any, res: any) {
         prompt,
         size: '1024x1024',
         quality: quality || 'medium',
-        response_format: 'b64_json',
         n: 1,
       }),
     });
