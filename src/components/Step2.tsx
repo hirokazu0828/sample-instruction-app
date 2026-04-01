@@ -278,9 +278,21 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
 
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const resData = await response.json();
-          const imageUrl = resData.imageUrl || resData.url || resData.image || resData;
           
-          if (typeof imageUrl === 'string' && imageUrl.startsWith('http')) {
+          let imageUrl = '';
+          const item = resData.data?.[0];
+          if (item?.b64_json) {
+            // base64の場合
+            imageUrl = `data:image/png;base64,${item.b64_json}`;
+          } else if (item?.url) {
+            // URLの場合（フォールバック）
+            imageUrl = item.url;
+          } else {
+            // その他のフォールバック (既存互換性)
+            imageUrl = resData.imageUrl || resData.url || resData.image || (typeof resData === 'string' ? resData : '');
+          }
+          
+          if (typeof imageUrl === 'string' && (imageUrl.startsWith('http') || imageUrl.startsWith('data:image'))) {
             currentImages[angleId] = imageUrl;
             // Update step-by-step
             updateData({ generatedImages: { ...currentImages } });
