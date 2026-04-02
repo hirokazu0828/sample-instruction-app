@@ -9,14 +9,14 @@ export default async function handler(req: any, res: any) {
   
   try {
     // Replicateにリクエスト送信
-    const response = await fetch('https://api.replicate.com/v1/models/jd7h/zero123plusplus/predictions', {
+    const response = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'Prefer': 'wait'
       },
       body: JSON.stringify({
+        version: 'c69c6559a29011b576f1ff0371b3bc1add2856480c60520c7e9ce0b40a6e9052',
         input: {
           image_path: `data:image/png;base64,${imageBase64}`,
           scale: 4,
