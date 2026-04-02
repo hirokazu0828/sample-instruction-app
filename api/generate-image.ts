@@ -12,15 +12,16 @@ export default async function handler(req: any, res: any) {
       // 不要なプレフィックスがある場合は除去する安全策
       const b64Data = req.body.imageBase64.replace(/^data:image\/\w+;base64,/, "");
       const binary = Buffer.from(b64Data, 'base64');
-      const { FormData, File } = await import('undici');
+      const { FormData } = await import('undici');
+      const { Blob } = await import('buffer');
       const form = new FormData();
       form.append('model', 'gpt-image-1');
       form.append('prompt', prompt);
       form.append('size', '1024x1024');
       if (quality) form.append('quality', quality);
       form.append('n', '1');
-      form.append('image', new File([binary], 'cover.png', { type: 'image/png' }));
-
+      const blob = new Blob([binary], { type: 'image/png' });
+      form.append('image', blob, 'cover.png');
       response = await fetch('https://api.openai.com/v1/images/edits', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}` },
