@@ -18,7 +18,7 @@ export default async function handler(req: any, res: any) {
       body: JSON.stringify({
         version: 'c69c6559a29011b576f1ff0371b3bc1add2856480c60520c7e9ce0b40a6e9052',
         input: {
-          image_path: `data:image/png;base64,${imageBase64}`,
+          image: `data:image/png;base64,${imageBase64}`,
           scale: 4,
           num_inference_steps: 75,
         }
