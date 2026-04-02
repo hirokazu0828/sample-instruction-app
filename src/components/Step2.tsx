@@ -15,14 +15,6 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
   const [currentProposalIndex, setCurrentProposalIndex] = useState(0);
   const [showToast, setShowToast] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-
-  const angleOptions = [
-    { id: 'front', label: '正面', prompt: 'front view' },
-    { id: 'back', label: '背面', prompt: 'back view' },
-    { id: 'side', label: '側面', prompt: 'side view' },
-    { id: 'neck', label: 'ネック部', prompt: 'neck close-up view' }
-  ];
-  const [selectedAngles, setSelectedAngles] = useState<string[]>(['front']);
   const [generatingStatus, setGeneratingStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({});
 
   const shapeMap: Record<string, string> = {
@@ -238,21 +230,43 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     return warnings;
   }, [fabricType, data]);
 
+  const sliceImage = async (imgUrl: string): Promise<string[]> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const sliceWidth = img.width / 2;
+        const sliceHeight = img.height / 3;
+        const slices: string[] = [];
+        const canvas = document.createElement('canvas');
+        canvas.width = sliceWidth;
+        canvas.height = sliceHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject('No context available');
+        
+        // Zero123++ 2x3 grid: 2 cols, 3 rows.
+        for (let row = 0; row < 3; row++) {
+          for (let col = 0; col < 2; col++) {
+            ctx.clearRect(0, 0, sliceWidth, sliceHeight);
+            ctx.drawImage(img, col * sliceWidth, row * sliceHeight, sliceWidth, sliceHeight, 0, 0, sliceWidth, sliceHeight);
+            slices.push(canvas.toDataURL('image/png'));
+          }
+        }
+        resolve(slices);
+      };
+      img.onerror = () => reject('Image load failed');
+      img.src = imgUrl; // Need a proxy or no-cors if not direct
+    });
+  };
+
+  const MULTIVIEW_KEYS = ['oblique_front', 'oblique_back', 'front_3d', 'oblique_right', 'oblique_left', 'side'];
+
   const handleGenerateImage = async () => {
-    if (selectedAngles.length === 0) {
-      alert('生成するアングルを選択してください。');
-      return;
-    }
-    
     setIsGenerating(true);
-    
-    // Initialize or keep existing map
-    const currentImages = { ...(data.generatedImages || {}) };
-    const newStatus: Record<string, 'idle' | 'loading' | 'done' | 'error'> = {};
-    selectedAngles.forEach(id => newStatus[id] = 'idle');
-    setGeneratingStatus(newStatus);
+    const currentImages = { ...data.generatedImages };
     
     try {
+      // 1. Generate Front Image
       const pColor = getLabel(specJson.parameters.body_color, data.bodyColor || '') || 'neutral';
       const pFabric = getLabel(specJson.parameters.body_fabric, data.bodyFabric || '') || 'standard';
       const pPiping = getLabel(specJson.parameters.piping, data.piping || '') || 'standard';
@@ -260,75 +274,73 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       
       const basePrompt = `A highly detailed professional product photograph of a golf putter cover. Shape: ${data.headShape || 'standard'}, Color: ${pColor}, Fabric material: ${pFabric}, Piping: ${pPiping}, Hardware Finish: ${pHardware}. Studio lighting, clean white background, high quality, 8k resolution.`;
 
-      const anglesToProcess = [...selectedAngles].sort((a, b) => a === 'front' ? -1 : (b === 'front' ? 1 : 0));
-      let currentFrontB64 = '';
-      if (currentImages['front']) {
-        currentFrontB64 = currentImages['front'].replace(/^data:image\/\w+;base64,/, '');
+      setGeneratingStatus({ front: 'loading' });
+      
+      const resFront = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          prompt: `${basePrompt}, front view`,
+          quality: data.imageQuality || 'medium'
+        }),
+      });
+
+      if (!resFront.ok) throw new Error('Failed to generate front image');
+      const dataFront = await resFront.json();
+      
+      const b64 = dataFront?.data?.[0]?.b64_json;
+      let frontUrl = '';
+      if (b64) {
+        frontUrl = `data:image/png;base64,${b64}`;
+      } else if (dataFront?.data?.[0]?.url) {
+        frontUrl = dataFront.data[0].url;
+      }
+      
+      if (!frontUrl) throw new Error('Invalid frontend image format');
+      
+      currentImages['front'] = frontUrl;
+      updateData({ generatedImages: { ...currentImages } });
+      setGeneratingStatus({ front: 'done', multiview: 'loading' });
+
+      // 2. Multiview 6 Angles via Replicate
+      // Extract pure base64 for the multiview payload
+      const pureB64 = frontUrl.replace(/^data:image\/\w+;base64,/, '');
+
+      const resMulti = await fetch('/api/generate-multiview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: pureB64 }),
+      });
+
+      if (!resMulti.ok) {
+        const errorText = await resMulti.text();
+        throw new Error(`Failed to generate multiview: ${errorText}`);
+      }
+      const dataMulti = await resMulti.json();
+      const multiviewUrl = dataMulti.imageUrl;
+
+      // 3. Slice Image using Canvas
+      const slices = await sliceImage(multiviewUrl);
+      
+      if (slices.length === 6) {
+        MULTIVIEW_KEYS.forEach((key, idx) => {
+          currentImages[key] = slices[idx];
+        });
+        updateData({ generatedImages: { ...currentImages } });
+        setGeneratingStatus({ front: 'done', multiview: 'done' });
+      } else {
+        throw new Error('Slicing failed to produce 6 images');
       }
 
-      for (const angleId of anglesToProcess) {
-        const option = angleOptions.find(o => o.id === angleId);
-        if (!option) continue;
-        
-        setGeneratingStatus(prev => ({ ...prev, [angleId]: 'loading' }));
-        
-        try {
-          let reqBody: any = { 
-            prompt: `${basePrompt}, ${option.prompt}`,
-            quality: data.imageQuality || 'medium'
-          };
-          if (angleId !== 'front' && currentFrontB64) {
-             reqBody.imageBase64 = currentFrontB64;
-          }
-
-          const response = await fetch('/api/generate-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(reqBody),
-          });
-
-          if (!response.ok) {
-            const errBody = await response.json().catch(() => ({}));
-            console.error("API error response:", errBody);
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-          const resData = await response.json();
-          
-          let imageUrl = '';
-          const b64 = resData?.data?.[0]?.b64_json;
-          if (b64) {
-            imageUrl = `data:image/png;base64,${b64}`;
-            if (angleId === 'front') {
-              currentFrontB64 = b64; // Save for subsequent edits
-            }
-          } else if (resData?.data?.[0]?.url) {
-            imageUrl = resData.data[0].url;
-          } else {
-            console.error("Unexpected API response format:", resData);
-            throw new Error('Invalid or empty image data returned from API');
-          }
-          
-          if (imageUrl) {
-            currentImages[angleId] = imageUrl;
-            // Update step-by-step
-            updateData({ generatedImages: { ...currentImages } });
-            setGeneratingStatus(prev => ({ ...prev, [angleId]: 'done' }));
-          }
-        } catch (e) {
-          console.error(`Error generating ${angleId}:`, e);
-          setGeneratingStatus(prev => ({ ...prev, [angleId]: 'error' }));
-        }
-      }
+    } catch (e) {
+      console.error(e);
+      alert('画像生成中にエラーが発生しました。');
+      setGeneratingStatus({ front: 'error', multiview: 'error' });
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const handleAngleToggle = (id: string) => {
-    setSelectedAngles(prev => 
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  };
 
   return (
     <div className="space-y-8 animate-fade-in fade-in pb-12">
@@ -661,47 +673,22 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           </div>
           <button
             onClick={handleGenerateImage}
-            disabled={isGenerating || selectedAngles.length === 0}
+            disabled={isGenerating}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed text-white font-medium py-2 px-6 rounded shadow transition-colors flex items-center justify-center gap-2 min-w-[200px]"
           >
             {isGenerating ? (
-              <><ArrowPathIcon className="w-4 h-4 animate-spin" /> 生成中...</>
+              <><ArrowPathIcon className="w-4 h-4 animate-spin" /> {generatingStatus['multiview'] === 'loading' ? '6アングル生成中...' : '正面画像生成中...'}</>
             ) : (
-              <><SparklesIcon className="w-4 h-4" /> 選択したアングルを全て生成</>
+              <><SparklesIcon className="w-4 h-4" /> 全アングルを一括生成</>
             )}
           </button>
         </div>
-        {/* アングル選択・画質選択エリア */}
+        
+        {/* 画像品質選択エリア (正面ベース画像用) */}
         <div className="bg-indigo-50 p-4 rounded-lg space-y-6">
-          <div>
-            <h4 className="text-sm font-bold text-indigo-900 mb-3">生成するアングルを選択:</h4>
-            <div className="flex flex-wrap gap-4">
-              {angleOptions.map(opt => (
-                <label key={opt.id} className="flex items-center gap-2 cursor-pointer bg-white px-3 py-2 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors">
-                  <input 
-                    type="checkbox" 
-                    checked={selectedAngles.includes(opt.id)}
-                    onChange={() => handleAngleToggle(opt.id)}
-                    className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
-                  />
-                  <span className="text-sm font-medium text-gray-700">{opt.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="border-t border-indigo-100 pt-4">
+          <div className="">
             <h4 className="text-sm font-bold text-indigo-900 mb-3 flex flex-col md:flex-row md:items-center justify-between gap-2">
-              <span>画像品質を選択:</span>
-              <span className="text-xs font-normal text-indigo-800 bg-indigo-100 px-3 py-1.5 rounded-full font-mono">
-                {selectedAngles.length}アングル生成コスト目安：
-                <strong className="text-indigo-900 ml-1">
-                  {selectedAngles.length > 0 
-                    ? `約$${(selectedAngles.length * (data.imageQuality === 'high' ? 0.17 : data.imageQuality === 'low' ? 0.01 : 0.04)).toFixed(2)}（約${Math.round(selectedAngles.length * (data.imageQuality === 'high' ? 0.17 : data.imageQuality === 'low' ? 0.01 : 0.04) * 150)}円）` 
-                    : '$0.00'
-                  }
-                </strong>
-              </span>
+              <span>正面ベース画像の品質を選択:</span>
             </h4>
             <div className="flex flex-col lg:flex-row gap-4">
               <label className="flex-1 flex items-start gap-3 cursor-pointer bg-white px-4 py-3 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors">
@@ -714,7 +701,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                 />
                 <div className="flex flex-col">
                   <span className="text-sm font-bold text-gray-800">低画質 (low)</span>
-                  <span className="text-xs text-gray-500 mt-0.5">確認用・約$0.01/枚</span>
+                  <span className="text-xs text-gray-500 mt-0.5">約$0.01/枚</span>
                 </div>
               </label>
               <label className="flex-1 flex items-start gap-3 cursor-pointer bg-white px-4 py-3 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors relative overflow-hidden">
@@ -730,7 +717,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                 />
                 <div className="flex flex-col">
                   <span className="text-sm font-bold text-gray-800">中画質 (medium)</span>
-                  <span className="text-xs text-gray-500 mt-0.5">通常用・約$0.04/枚</span>
+                  <span className="text-xs text-gray-500 mt-0.5">約$0.04/枚</span>
                 </div>
               </label>
               <label className="flex-1 flex items-start gap-3 cursor-pointer bg-white px-4 py-3 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors">
@@ -743,7 +730,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                 />
                 <div className="flex flex-col">
                   <span className="text-sm font-bold text-gray-800">高画質 (high)</span>
-                  <span className="text-xs text-gray-500 mt-0.5">最終確認用・約$0.17/枚</span>
+                  <span className="text-xs text-gray-500 mt-0.5">約$0.17/枚</span>
                 </div>
               </label>
             </div>
@@ -751,14 +738,22 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
         </div>
 
         {/* プレビューエリア (2列グリッド) */}
-        {(selectedAngles.length > 0 || (data.generatedImages && Object.keys(data.generatedImages).length > 0)) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-            {angleOptions.filter(opt => selectedAngles.includes(opt.id) || (data.generatedImages && data.generatedImages[opt.id])).map(opt => {
-              const status = generatingStatus[opt.id];
+        {(isGenerating || (data.generatedImages && data.generatedImages['front'])) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
+            {[
+              { id: 'front', label: '正面 (オリジナル高画質)' },
+              { id: 'oblique_front', label: '斜め正面' },
+              { id: 'oblique_back', label: '斜め背面' },
+              { id: 'front_3d', label: '正面 (3D抽出)' },
+              { id: 'oblique_right', label: '斜め右' },
+              { id: 'oblique_left', label: '斜め左' },
+              { id: 'side', label: '側面' }
+            ].map(opt => {
+              const status = generatingStatus[opt.id === 'front' ? 'front' : 'multiview'];
               const imageUrl = data.generatedImages?.[opt.id];
               
               return (
-                <div key={opt.id} className="w-full h-64 bg-gray-100 rounded border border-gray-200 flex flex-col overflow-hidden relative group">
+                <div key={opt.id} className="w-full h-48 bg-gray-100 rounded border border-gray-200 flex flex-col overflow-hidden relative group">
                   <div className="absolute top-2 left-2 bg-black/60 text-white text-xs font-bold px-2 py-1 rounded z-10">
                     {opt.label}
                   </div>
@@ -769,17 +764,17 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
                       {status === 'loading' ? (
                         <>
-                          <ArrowPathIcon className="w-10 h-10 mb-2 animate-spin text-indigo-400" />
+                          <ArrowPathIcon className="w-8 h-8 mb-2 animate-spin text-indigo-400" />
                           <span className="text-xs font-medium text-indigo-500">生成中...</span>
                         </>
                       ) : status === 'error' ? (
                         <>
-                          <ExclamationTriangleIcon className="w-10 h-10 mb-2 text-red-400" />
+                          <ExclamationTriangleIcon className="w-8 h-8 mb-2 text-red-400" />
                           <span className="text-xs font-medium text-red-500">失敗</span>
                         </>
                       ) : (
                         <>
-                          <PhotoIcon className="w-10 h-10 mb-2 opacity-30" />
+                          <PhotoIcon className="w-8 h-8 mb-2 opacity-30" />
                           <span className="text-xs font-medium">待機中</span>
                         </>
                       )}

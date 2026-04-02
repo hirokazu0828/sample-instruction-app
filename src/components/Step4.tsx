@@ -203,7 +203,7 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
               </tbody>
             </table>
           </div>
-          {/* P1: 正面と背面の2枚のみ強制表示 (プレースホルダ対応) */}
+          {/* P1: 正面と斜め正面の2枚を表示 */}
           <div className="w-[240px] border-2 border-[#16a34a] p-2 bg-[#f0fdf4] print:border-[#333] print:bg-white flex flex-col items-center flex-shrink-0">
             <span className="text-[#16a34a] font-bold text-sm mb-2 print:text-[#333]">■ デザイン完成イメージ (AI)</span>
             <div className="flex flex-col gap-4 w-full h-full">
@@ -214,16 +214,16 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
                 ) : (
                   <div className="w-full flex-1 min-h-[160px] bg-gray-100 flex items-center justify-center text-gray-400 text-xs text-center p-2 rounded">画像未生成<br/>(正面)</div>
                 )}
-                <span className="text-[10px] font-bold mt-1 text-gray-700">正面</span>
+                <span className="text-[10px] font-bold mt-1 text-gray-700">正面 (高画質)</span>
               </div>
-              {/* 背面 */}
+              {/* 斜め正面 */}
               <div className="flex-1 flex flex-col items-center bg-white p-1 border rounded shadow-sm print:shadow-none print:border-gray-300">
-                {data.generatedImages?.back ? (
-                  <img src={data.generatedImages.back} alt="背面" className="w-full h-auto object-contain flex-1 min-h-0" />
+                {data.generatedImages?.oblique_front ? (
+                  <img src={data.generatedImages.oblique_front} alt="斜め正面" className="w-full h-auto object-contain flex-1 min-h-0" />
                 ) : (
-                  <div className="w-full flex-1 min-h-[160px] bg-gray-100 flex items-center justify-center text-gray-400 text-xs text-center p-2 rounded">画像未生成<br/>(背面)</div>
+                  <div className="w-full flex-1 min-h-[160px] bg-gray-100 flex items-center justify-center text-gray-400 text-xs text-center p-2 rounded">画像未生成<br/>(斜め正面)</div>
                 )}
-                <span className="text-[10px] font-bold mt-1 text-gray-700">背面</span>
+                <span className="text-[10px] font-bold mt-1 text-gray-700">斜め正面 (3D)</span>
               </div>
             </div>
           </div>
@@ -301,13 +301,20 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
 
         {/* P2: 自動生成された全アングル画像の表示 */}
         <div className="mb-[20px] border-t border-[#ddd] pt-[16px]">
-          <h4 className="font-bold mb-2">デザイン画像 (全アングル展開)</h4>
-          {data.generatedImages && Object.keys(data.generatedImages).length > 0 ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {['front', 'back', 'side', 'neck'].map(key => {
+          <h4 className="font-bold mb-2">デザイン画像 (全6アングル展開)</h4>
+          {data.generatedImages && data.generatedImages.oblique_front ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {['oblique_front', 'oblique_back', 'front_3d', 'oblique_right', 'oblique_left', 'side'].map(key => {
                 const url = data.generatedImages![key];
                 if (!url) return null;
-                const labelMap: Record<string, string> = { front: '正面', back: '背面', side: '側面', neck: 'ネック部' };
+                const labelMap: Record<string, string> = { 
+                  oblique_front: '斜め正面', 
+                  oblique_back: '斜め背面', 
+                  front_3d: '正面', 
+                  oblique_right: '斜め右',
+                  oblique_left: '斜め左',
+                  side: '側面' 
+                };
                 return (
                   <div key={key} className="flex flex-col items-center bg-white p-2 border border-gray-300 rounded print:border-[#333]">
                     <img src={url} alt={labelMap[key]} className="w-full h-[160px] object-contain" />
