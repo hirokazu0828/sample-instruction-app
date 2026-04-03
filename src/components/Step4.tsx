@@ -293,18 +293,18 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
         {/* P2: 自動生成された全アングル画像の表示 */}
         <div className="mb-[20px] border-t border-[#ddd] pt-[16px]">
           <h4 className="font-bold mb-2">デザイン画像 (全6アングル展開)</h4>
-          {data.generatedImages && data.generatedImages.oblique_front ? (
+          {data.generatedImages && data.generatedImages.oblique_front_right ? (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {['oblique_front', 'oblique_back', 'front_3d', 'oblique_right', 'oblique_left', 'side'].map(key => {
+              {['oblique_front_right', 'side_right', 'oblique_back_right', 'oblique_back_left', 'side_left', 'oblique_front_left'].map(key => {
                 const url = data.generatedImages![key];
                 if (!url) return null;
                 const labelMap: Record<string, string> = { 
-                  oblique_front: '斜め正面', 
-                  oblique_back: '斜め背面', 
-                  front_3d: '正面', 
-                  oblique_right: '斜め右',
-                  oblique_left: '斜め左',
-                  side: '側面' 
+                  oblique_front_right: '斜め正面(右)', 
+                  side_right: '右側面', 
+                  oblique_back_right: '斜め背面(右)', 
+                  oblique_back_left: '斜め背面(左)',
+                  side_left: '左側面',
+                  oblique_front_left: '斜め正面(左)' 
                 };
                 return (
                   <div key={key} className="flex flex-col items-center bg-white p-2 border border-gray-300 rounded print:border-[#333]">
@@ -402,14 +402,14 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
         <div className="mt-6">
           <h4 className="font-bold text-sm mb-3 border-b border-gray-300 pb-1">全アングル展開イメージ</h4>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {['oblique_front','oblique_back','front_3d','oblique_right','oblique_left','side'].map(key => (
+            {['oblique_front_right','side_right','oblique_back_right','oblique_back_left','side_left','oblique_front_left'].map(key => (
               data.generatedImages?.[key] ? (
                 <div key={key} className="flex flex-col items-center">
                   <img src={data.generatedImages[key]} alt={key} className="w-full aspect-square object-cover rounded border border-gray-200 shadow-sm" />
                   <span className="text-[10px] mt-1 text-gray-500">{{
-                    oblique_front: '斜め正面', oblique_back: '斜め背面',
-                    front_3d: '正面(3D)', oblique_right: '斜め右',
-                    oblique_left: '斜め左', side: '側面'
+                    oblique_front_right: '斜め右前', side_right: '右側面',
+                    oblique_back_right: '斜め右後ろ', oblique_back_left: '斜め左後ろ',
+                    side_left: '左側面', oblique_front_left: '斜め左前'
                   }[key]}</span>
                 </div>
               ) : (
@@ -538,10 +538,10 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
             <div className="w-[240px] border-2 border-[#16a34a] p-2 bg-[#f0fdf4] print:border-[#333] print:bg-white flex flex-col items-center flex-shrink-0 print:hidden md:flex">
               <span className="text-[#16a34a] font-bold text-sm mb-2 print:text-[#333]">■ デザイン完成イメージ</span>
               <div className="flex flex-col gap-2 w-full">
-                {['front', 'side'].map(key => {
+                {['front', 'side_right'].map(key => {
                   const url = data.generatedImages![key];
                   if (!url) return null;
-                  const labelMap: Record<string, string> = { front: '正面', side: '側面' };
+                  const labelMap: Record<string, string> = { front: '正面', side_right: '右側面' };
                   return (
                     <div key={key} className="flex flex-col items-center bg-white p-1 border rounded shadow-sm">
                       <img src={url} alt={labelMap[key]} className="w-full h-auto object-contain" />

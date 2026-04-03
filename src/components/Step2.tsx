@@ -388,7 +388,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     return warnings;
   }, [fabricType, data]);
 
-  const sliceImage = async (imgUrl: string): Promise<string[]> => {
+  const sliceImage = async (imgUrl: string, flipIndices: number[] = []): Promise<string[]> => {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -403,11 +403,24 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
         if (!ctx) return reject('No context available');
         
         // Zero123++ 2x3 grid: 2 cols, 3 rows.
+        let idx = 0;
         for (let row = 0; row < 3; row++) {
           for (let col = 0; col < 2; col++) {
             ctx.clearRect(0, 0, sliceWidth, sliceHeight);
-            ctx.drawImage(img, col * sliceWidth, row * sliceHeight, sliceWidth, sliceHeight, 0, 0, sliceWidth, sliceHeight);
+            
+            // 水平反転が必要なアングルの場合
+            if (flipIndices.includes(idx)) {
+              ctx.save();
+              ctx.translate(sliceWidth, 0);
+              ctx.scale(-1, 1);
+              ctx.drawImage(img, col * sliceWidth, row * sliceHeight, sliceWidth, sliceHeight, 0, 0, sliceWidth, sliceHeight);
+              ctx.restore();
+            } else {
+              ctx.drawImage(img, col * sliceWidth, row * sliceHeight, sliceWidth, sliceHeight, 0, 0, sliceWidth, sliceHeight);
+            }
+            
             slices.push(canvas.toDataURL('image/png'));
+            idx++;
           }
         }
         resolve(slices);
@@ -417,7 +430,14 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     });
   };
 
-  const MULTIVIEW_KEYS = ['oblique_front', 'oblique_back', 'front_3d', 'oblique_right', 'oblique_left', 'side'];
+  const MULTIVIEW_KEYS = [
+    'oblique_front_right', // 0: 30°
+    'side_right',          // 1: 90°
+    'oblique_back_right',  // 2: 150°
+    'oblique_back_left',   // 3: 210°
+    'side_left',           // 4: 270°
+    'oblique_front_left'   // 5: 330°
+  ];
 
   const removeBlackBackground = (logoImgUrl: string): Promise<string> => {
     return new Promise((resolve) => {
@@ -463,28 +483,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
 
 
 
-  // ロゴ情報をプロンプトに追加するための共通ヘルパー
-  const buildLogoPromptAdditions = () => {
-    if (!data.logos || data.logos.length === 0) return '';
-    const colorMap: Record<string, string> = {
-      '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
-      '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green',
-      '#ffa500': 'orange', '#800080': 'purple',
-    };
-    const parts = data.logos.map(l => {
-      const typeStr = PROCESSING_TYPES[l.processingType] || 'logo';
-      const colorName = l.logoColor && l.logoColor !== '#ffffff'
-        ? (colorMap[l.logoColor.toLowerCase()] || l.logoColor)
-        : '';
-      const textPart = l.logoText ? `'${l.logoText}'` : '';
-      const dirStr = l.logoType === 'text'
-        ? (l.textDirection === 'vertical' ? 'vertical text arrangement, top to bottom' : 'horizontal text')
-        : '';
-      const placementStr = l.isTopFixed ? 'at top center' : 'centered on front panel';
-      return [colorName, typeStr, dirStr, textPart, placementStr].filter(Boolean).join(' ');
-    });
-    return ` with ${parts.join(' and ')}`;
-  };
+
 
   const handleGenerateFront = async () => {
     setIsGenerating(true);
@@ -497,9 +496,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       const pPiping = getLabel(specJson.parameters.piping, data.piping || '') || 'standard';
       const pHardware = getLabel(specJson.parameters.hardware_finish, data.hardwareFinish || '') || 'standard';
       
-      const logoPromptAdditions = buildLogoPromptAdditions();
-      
-      const basePrompt = `A highly detailed professional product photograph of a golf putter cover. Shape: ${data.headShape || 'standard'}, Color: ${pColor}, Fabric material: ${pFabric}, Piping: ${pPiping}, Hardware Finish: ${pHardware}.${logoPromptAdditions} Studio lighting, clean white background, high quality, 8k resolution.`;
+      const basePrompt = `A highly detailed professional product photograph of a blank golf putter cover with no logos, no text, and no branding. Shape: ${data.headShape || 'standard'}, Color: ${pColor}, Fabric material: ${pFabric}, Piping: ${pPiping}, Hardware Finish: ${pHardware}. Studio lighting, clean white background, high quality, 8k resolution.`;
 
       setGeneratingStatus({ front: 'loading' });
       
@@ -659,7 +656,8 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       const dataMulti = await resMulti.json();
       const multiviewUrl = dataMulti.imageUrl;
 
-      const slices = await sliceImage(multiviewUrl);
+      // インデックス 1(90°), 2(150°), 3(210°) は鏡像になりやすいため反転させる
+      const slices = await sliceImage(multiviewUrl, [1, 2, 3]);
       
       if (slices.length === 6) {
         MULTIVIEW_KEYS.forEach((key, idx) => {
@@ -1332,12 +1330,12 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
             {[
               { id: 'front', label: '① 正面 (ロゴプレビュー)' },
-              { id: 'oblique_front', label: '斜め正面' },
-              { id: 'oblique_back', label: '斜め背面' },
-              { id: 'front_3d', label: '正面 (3D抽出)' },
-              { id: 'oblique_right', label: '斜め右' },
-              { id: 'oblique_left', label: '斜め左' },
-              { id: 'side', label: '側面' }
+              { id: 'oblique_front_right', label: '斜め右前' },
+              { id: 'side_right', label: '右サイド' },
+              { id: 'oblique_back_right', label: '斜め右後ろ' },
+              { id: 'oblique_back_left', label: '斜め左後ろ' },
+              { id: 'side_left', label: '左サイド' },
+              { id: 'oblique_front_left', label: '斜め左前' }
             ].map(opt => {
               const status = generatingStatus[opt.id === 'front' ? 'front' : 'multiview'];
               const isFrontPreview = opt.id === 'front';
