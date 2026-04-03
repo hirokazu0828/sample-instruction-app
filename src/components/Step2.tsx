@@ -599,14 +599,33 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
 
       const topPrompt = `same exact product, putter head cover in ${pColor} ${pFabric}, view from directly above, top-down bird's eye view, showing the neck opening and top surface of the putter cover, same color and material${logoAdditions}, white studio background, high quality`;
 
-      const imgBase64 = frontBase.replace(/^data:image\/\w+;base64,/, '');
+      // front_baseはdata:URLまたはhttps://URLの両方がありうる。
+      // どちらでもbase64文字列に変換してから送信する。
+      let imgBase64 = '';
+      if (frontBase.startsWith('data:')) {
+        imgBase64 = frontBase.replace(/^data:image\/\w+;base64,/, '');
+      } else {
+        // https://なURLの場合→ブラウザ側でfetchしてbase64化
+        const fetched = await fetch(frontBase);
+        const blob = await fetched.blob();
+        imgBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve(result.replace(/^data:image\/\w+;base64,/, ''));
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      }
+
       const res = await fetch('/api/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: topPrompt,
           imageBase64: imgBase64,
-          quality: data.imageQuality || 'medium'
+          quality: 'low'   // トップ画像はlow固定（高コスト防止）
         })
       });
       if (!res.ok) throw new Error('Failed to generate top image');
