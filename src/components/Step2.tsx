@@ -593,12 +593,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     setIsGenerating(true);
     setGeneratingStatus(prev => ({ ...prev, top: 'loading' }));
     try {
-      const pColor = getLabel(specJson.parameters.body_color, data.bodyColor || '') || 'neutral';
-      const pFabric = getLabel(specJson.parameters.body_fabric, data.bodyFabric || '') || 'standard';
-      const logoAdditions = buildLogoPromptAdditions(); // ネック画像には現状未使用（将来針山用）
-      void logoAdditions;
-
-      const neckPrompt = `same exact product, rear view from slightly above, showing the neck tube and shaft opening clearly, neck area in focus, ${pColor} ${pFabric} putter head cover, same color and material, white studio background, high quality product photo`;
+      const neckPrompt = `same exact product, front view of the neck base area, showing the flat front panel of the neck tube clearly, neck base panel facing camera directly, same color and material as the original, white studio background, close-up product shot, similar to a blade putter cover showing the neck front panel`;
 
       // front_baseはdata:URLまたはhttps://URLの両方がありうる。
       // どちらでもbase64文字列に変換してから送信する。
@@ -714,20 +709,20 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
         });
       }
 
-      // 加工タイプ・テキスト・カラーをプロンプトに組み込み
-      const colorMap: Record<string, string> = {
-        '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
-        '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green', '#ffa500': 'orange',
-      };
+      // 加工タイプ・テキスト・カラーをプロンプトに組み込み（colorMapは各ループ内で定義）
       const embParts = (data.topLogos || []).map(l => {
         const typeEn = PROCESSING_TYPES[l.processingType] || 'embroidery';
-        const colorName = colorMap[l.logoColor?.toLowerCase()] || l.logoColor || 'white';
-        const text = l.logoText ? `'${l.logoText}'` : '';
-        return `add ${typeEn} ${text} in ${colorName} thread on the neck area`;
+        const colorMap2: Record<string, string> = {
+          '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
+          '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green', '#ffa500': 'orange',
+        };
+        const colorName = colorMap2[l.logoColor?.toLowerCase()] || l.logoColor || 'white';
+        const text = l.logoText || '';
+        return `same product, the neck front panel now has ${typeEn} embroidery '${text}' in ${colorName}, realistic thread texture, centered on neck panel, same product color and shape otherwise`;
       });
       const embPrompt = embParts.length > 0
-        ? `${embParts.join(', ')}, realistic embroidery texture, 3D raised stitching detail, same product color and material otherwise, white studio background`
-        : `add detailed embroidery texture on the neck area, 3D raised stitching, realistic thread detail, same product otherwise, white studio background`;
+        ? embParts[0] + (embParts.length > 1 ? '. Also: ' + embParts.slice(1).join('. Also: ') : '') + ', white studio background'
+        : `same product, the neck front panel now has detailed embroidery texture, realistic 3D raised stitching, centered on neck panel, same product color and shape otherwise, white studio background`;
 
       const res = await fetch('/api/generate-image', {
         method: 'POST',
