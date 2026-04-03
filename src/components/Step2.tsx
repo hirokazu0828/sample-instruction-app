@@ -405,7 +405,10 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     if (!data.logoText) return;
     setLogoGeneratingStatus('loading');
     try {
-      const prompt = `minimalist brand logo, ${data.logoText}, white symbol on pure black square background, street style golf brand, clean geometric design, no text`;
+      const prompt = data.logoType === 'text' 
+        ? `bold typography logo, '${data.logoText}' text in white, pure black background, modern street style font, clean minimal design`
+        : `minimalist brand logo mark for '${data.logoText}', white icon symbol on pure black background, simple geometric shape, no letters, no text, street style golf brand icon, clean vector style`;
+        
       const res = await fetch('/api/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -912,6 +915,28 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                     >
                       {logoGeneratingStatus === 'loading' ? '生成中...' : data.generatedLogo ? '再生成' : 'ロゴを生成'}
                     </button>
+                  </div>
+                  <div className="flex gap-4 mt-2">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+                      <input 
+                        type="radio" 
+                        name="logoType" 
+                        checked={(!data.logoType || data.logoType === 'icon')} 
+                        onChange={() => updateData({ logoType: 'icon' })}
+                        className="text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                      />
+                      アイコン生成
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+                      <input 
+                        type="radio" 
+                        name="logoType" 
+                        checked={data.logoType === 'text'} 
+                        onChange={() => updateData({ logoType: 'text' })}
+                        className="text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                      />
+                      テキストロゴ
+                    </label>
                   </div>
                 </div>
                 

@@ -66,6 +66,7 @@ export type SpecData = {
 
   // Logo fields
   logoText?: string;
+  logoType?: 'icon' | 'text';
   generatedLogo?: string;
   logoPosition?: 'top-center' | 'bottom-center' | 'top-left' | 'top-right';
   logoScale?: number;
@@ -123,5 +124,6 @@ export const initialSpecData: SpecData = {
   ],
   logoPosition: 'bottom-center',
   logoScale: 20,
+  logoType: 'icon',
 };
 
