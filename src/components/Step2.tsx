@@ -590,17 +590,66 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     const currentImages = { ...data.generatedImages };
     
     try {
-      // ロゴテキストはZero123++に送信しない（文字峓転バグ回避）。
-      // 常にfront_base（ロゴオーバーレイなし）を送信する。
-      const sourceImage = data.generatedImages?.['front_base'] || data.generatedImages?.['front'] || null;
-      if (!sourceImage) throw new Error('元の画像が存在しません。');
+      const sourceUrl = data.generatedImages?.['front_base'] || data.generatedImages?.['front'] || null;
+      if (!sourceUrl) throw new Error('元の画像が存在しません。');
 
-      const pureB64 = sourceImage.replace(/^data:image\/\w+;base64,/, '');
+      // 1. Canvas合成を行ってロゴ込みの正面画像（base64）を作成する
+      const compositeB64 = await new Promise<string>((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = async () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d')!;
+          ctx.drawImage(img, 0, 0);
+
+          // ロゴを順番に合成
+          const activeLogos = (data.logos || []).filter(l => l.generatedLogo && transparentLogos[l.id]);
+          for (const logo of activeLogos) {
+            await new Promise<void>((logoRes) => {
+              const li = new Image();
+              li.crossOrigin = 'anonymous';
+              li.onload = () => {
+                // オフスクリーンCanvasで色付け (source-in)
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = li.width;
+                offCanvas.height = li.height;
+                const offCtx = offCanvas.getContext('2d')!;
+                
+                // 元のロゴを描画
+                offCtx.drawImage(li, 0, 0);
+                // 指定色で塗りつぶし
+                offCtx.globalCompositeOperation = 'source-in';
+                offCtx.fillStyle = logo.logoColor || '#ffffff';
+                offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+
+                // メインCanvasに描画
+                ctx.globalAlpha = (logo.logoOpacity ?? 100) / 100;
+                const scale = (logo.logoScale ?? 20) / 100;
+                const w = canvas.width * scale;
+                const h = w * (li.height / Math.max(1, li.width));
+                const cx = ((logo.logoX ?? 50) / 100) * canvas.width;
+                const cy = ((logo.logoY ?? 50) / 100) * canvas.height;
+                
+                ctx.drawImage(offCanvas, cx - w / 2, cy - h / 2, w, h);
+                ctx.globalAlpha = 1;
+                logoRes();
+              };
+              li.onerror = () => logoRes();
+              li.src = transparentLogos[logo.id];
+            });
+          }
+          resolve(canvas.toDataURL('image/png').replace(/^data:image\/\w+;base64,/, ''));
+        };
+        img.onerror = () => reject('Base image load failed');
+        img.src = sourceUrl;
+      });
 
       const resMulti = await fetch('/api/generate-multiview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: pureB64 }),
+        body: JSON.stringify({ imageBase64: compositeB64 }),
       });
 
       if (!resMulti.ok) {
@@ -616,8 +665,8 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
         MULTIVIEW_KEYS.forEach((key, idx) => {
           currentImages[key] = slices[idx];
         });
-        // frontは常にfront_base（ロゴオーバーレイはCSSでプレビューのみ）
-        currentImages['front'] = currentImages['front_base'] || sourceImage;
+        // frontにも合成済みの画像を反映させる（指示書などでロゴが表示されるようにするため）
+        currentImages['front'] = `data:image/png;base64,${compositeB64}`;
 
         updateData({ generatedImages: { ...currentImages } });
         setGeneratingStatus(prev => ({ ...prev, multiview: 'done' }));
@@ -1272,7 +1321,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                     <><SparklesIcon className="w-4 h-4" /> 全アングルを生成</>
                   )}
                 </button>
-                <p className="text-xs text-indigo-500 text-center">※ロゴは正面プレビューのみ表示（文字反転防止）</p>
+                <p className="text-xs text-indigo-500 text-center">※ロゴを合成した状態で全アングルを生成します</p>
               </div>
             </div>
           </div>
