@@ -4,17 +4,68 @@ import type { SpecData } from '../types';
 import specJson from '../data/putter_cover_parametric_v3.json';
 
 const PROCESSING_TYPES: Record<string, string> = {
-  普通刺繍: "embroidered logo, flat embroidery stitching",
+  普通刺繍: "flat embroidery stitching",
   振り刺繍: "satin stitch embroidery, directional thread",
   畳刺繍: "tatami stitch embroidery, woven texture",
   畳立体刺繍: "3D raised embroidery, padded tatami stitch",
   文字型土台畳刺繍: "raised letter embroidery on base",
-  金属プレート: "metal plate badge, engraved logo",
-  シリコンパッチ: "silicone rubber patch logo",
-  プリント: "printed logo, flat print"
+  金属プレート: "metal plate badge, engraved",
+  シリコンパッチ: "silicone rubber patch",
+  プリント: "flat print"
 };
 
-const DraggableLogo = ({ logoSrc, logoScale, logoX, logoY, logoColor, logoOpacity, onUpdate }: any) => {
+const createCanvasTextLogo = (text: string, fontType: string, direction: 'horizontal' | 'vertical'): Promise<string> => {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return resolve('');
+
+    let fontFamily = 'sans-serif';
+    if (fontType === 'mincho') fontFamily = 'serif';
+    else if (fontType === 'english') fontFamily = 'Arial, Helvetica, sans-serif';
+
+    const fontSize = 100;
+    ctx.font = `bold ${fontSize}px ${fontFamily}`;
+    ctx.textBaseline = 'top';
+
+    const chars = text.split('');
+    let width = 0;
+    let height = 0;
+
+    if (direction === 'vertical') {
+      width = fontSize;
+      height = chars.length * fontSize * 1.1;
+    } else {
+      width = ctx.measureText(text).width;
+      height = fontSize * 1.2;
+    }
+
+    canvas.width = width + 40;
+    canvas.height = height + 40;
+
+    // We must paint the background black so `removeBlackBackground` works smoothly like AI generations
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.font = `bold ${fontSize}px ${fontFamily}`;
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#ffffff';
+
+    if (direction === 'vertical') {
+      chars.forEach((char, i) => {
+        const met = ctx.measureText(char);
+        const cw = met.width;
+        ctx.fillText(char, 20 + (width - cw)/2, 20 + i * (fontSize * 1.1));
+      });
+    } else {
+      ctx.fillText(text, 20, 20);
+    }
+    
+    resolve(canvas.toDataURL('image/png'));
+  });
+};
+
+const DraggableLogo = ({ logoSrc, logoScale, logoX, logoY, logoColor, logoOpacity, isTopFixed, onUpdate }: any) => {
   const [localX, setLocalX] = useState(logoX);
   const [localY, setLocalY] = useState(logoY);
   
@@ -24,6 +75,7 @@ const DraggableLogo = ({ logoSrc, logoScale, logoX, logoY, logoColor, logoOpacit
   }, [logoX, logoY]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isTopFixed) return;
     e.preventDefault();
     const parent = e.currentTarget.parentElement;
     if (!parent) return;
@@ -73,7 +125,7 @@ const DraggableLogo = ({ logoSrc, logoScale, logoX, logoY, logoColor, logoOpacit
 
   return (
     <div
-      className="absolute cursor-move border-[1.5px] border-dashed border-indigo-400 bg-white/20 hover:bg-white/40 transition-colors shadow-sm"
+      className={`absolute ${isTopFixed ? '' : 'cursor-move'} border-[1.5px] border-dashed ${isTopFixed ? 'border-gray-400 bg-white/10' : 'border-indigo-400 bg-white/20 hover:bg-white/40'} transition-colors shadow-sm`}
       style={{
         left: `${localX}%`,
         top: `${localY}%`,
@@ -100,7 +152,9 @@ const DraggableLogo = ({ logoSrc, logoScale, logoX, logoY, logoColor, logoOpacit
             opacity: typeof logoOpacity === 'number' ? logoOpacity / 100 : 1
         }} />
       </div>
-      <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 hover:opacity-100 transition-opacity">ドラッグで移動</div>
+      {!isTopFixed && (
+        <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 hover:opacity-100 transition-opacity">ドラッグで移動</div>
+      )}
     </div>
   );
 };
@@ -420,8 +474,16 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       
       let logoPromptAdditions = '';
       if (data.logos && data.logos.length > 0) {
-         const types = data.logos.map(l => PROCESSING_TYPES[l.processingType] || 'logo');
-         logoPromptAdditions = ` with ${types.join(' and ')}, centered on front panel`;
+         const types = data.logos.map(l => {
+           let typeStr = PROCESSING_TYPES[l.processingType] || 'logo';
+           if (l.logoType === 'text') {
+              typeStr += l.textDirection === 'vertical' ? ' vertical text arrangement, top to bottom' : ' horizontal text';
+           }
+           let placementStr = l.isTopFixed ? 'at top' : 'centered on front panel';
+           let colorStr = (l.logoColor && l.logoColor !== '#ffffff') ? `in color ${l.logoColor}` : '';
+           return `${typeStr} ${colorStr} ${placementStr}`.trim();
+         });
+         logoPromptAdditions = ` with ${types.join(' and ')}`;
       }
       
       const basePrompt = `A highly detailed professional product photograph of a golf putter cover. Shape: ${data.headShape || 'standard'}, Color: ${pColor}, Fabric material: ${pFabric}, Piping: ${pPiping}, Hardware Finish: ${pHardware}.${logoPromptAdditions} Studio lighting, clean white background, high quality, 8k resolution.`;
@@ -469,26 +531,30 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     
     setLogoGeneratingStatus(prev => ({ ...prev, [logoId]: 'loading' }));
     try {
-      const typePrompt = PROCESSING_TYPES[targetLogo.processingType] || "logo";
-      const prompt = targetLogo.logoType === 'text' 
-        ? `bold typography logo, '${targetLogo.logoText}' text in white, pure black background, modern street style font, clean minimal design, ${typePrompt}`
-        : `minimalist brand logo mark for '${targetLogo.logoText}', white icon symbol on pure black background, simple geometric shape, no letters, no text, street style golf brand icon, clean vector style, ${typePrompt}`;
-        
-      const res = await fetch('/api/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, quality: 'low' })
-      });
-      if (!res.ok) throw new Error('Failed to generate logo');
-      const dataLogo = await res.json();
-      const b64 = dataLogo?.data?.[0]?.b64_json;
       let logoUrl = '';
-      if (b64) {
-        logoUrl = `data:image/png;base64,${b64}`;
-      } else if (dataLogo?.data?.[0]?.url) {
-        logoUrl = dataLogo.data[0].url;
+      if (targetLogo.logoType === 'text') {
+        const fontType = targetLogo.textFont || 'gothic';
+        const direction = targetLogo.textDirection || 'horizontal';
+        logoUrl = await createCanvasTextLogo(targetLogo.logoText, fontType, direction);
+      } else {
+        const typePrompt = PROCESSING_TYPES[targetLogo.processingType] || "logo";
+        const prompt = `minimalist brand logo mark for '${targetLogo.logoText}', white icon symbol on pure black background, simple geometric shape, no letters, no text, street style golf brand icon, clean vector style, ${typePrompt}`;
+          
+        const res = await fetch('/api/generate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, quality: 'low' })
+        });
+        if (!res.ok) throw new Error('Failed to generate logo');
+        const dataLogo = await res.json();
+        const b64 = dataLogo?.data?.[0]?.b64_json;
+        if (b64) {
+          logoUrl = `data:image/png;base64,${b64}`;
+        } else if (dataLogo?.data?.[0]?.url) {
+          logoUrl = dataLogo.data[0].url;
+        }
+        if (!logoUrl) throw new Error('Invalid logo format');
       }
-      if (!logoUrl) throw new Error('Invalid logo format');
       
       const updatedLogos = (data.logos || []).map(l => 
         l.id === logoId ? { ...l, generatedLogo: logoUrl } : l
@@ -1037,6 +1103,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                    
                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                      <div className="space-y-3">
+                       {/* 加工タイプ */}
                        <div>
                          <label className="block text-xs font-medium text-gray-700 mb-1">加工タイプ</label>
                          <select 
@@ -1052,6 +1119,8 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                            ))}
                          </select>
                        </div>
+
+                       {/* ロゴテキスト / キーワード */}
                        <div>
                          <label className="block text-xs font-medium text-gray-700 mb-1">ロゴテキスト / キーワード</label>
                          <div className="flex gap-2">
@@ -1074,20 +1143,89 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                            </button>
                          </div>
                        </div>
-                       <div className="flex gap-4">
-                         <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600">
-                           <input type="radio" checked={logo.logoType === 'icon'} onChange={() => {
-                             const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoType: 'icon' as any } : l);
-                             updateData({ logos: updated });
-                           }} className="text-indigo-600 border-gray-300" />
-                           アイコン
-                         </label>
-                         <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600">
-                           <input type="radio" checked={logo.logoType === 'text'} onChange={() => {
-                             const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoType: 'text' as any } : l);
-                             updateData({ logos: updated });
-                           }} className="text-indigo-600 border-gray-300" />
-                           テキスト
+
+                       {/* アイコン / テキスト モード */}
+                       <div>
+                         <label className="block text-xs font-medium text-gray-700 mb-1">モード</label>
+                         <div className="flex gap-4">
+                           <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600">
+                             <input type="radio" name={`logoType-${logo.id}`} checked={logo.logoType !== 'text'} onChange={() => {
+                               const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoType: 'icon' as const } : l);
+                               updateData({ logos: updated });
+                             }} className="text-indigo-600 border-gray-300" />
+                             アイコン生成(AI)
+                           </label>
+                           <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600">
+                             <input type="radio" name={`logoType-${logo.id}`} checked={logo.logoType === 'text'} onChange={() => {
+                               const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoType: 'text' as const } : l);
+                               updateData({ logos: updated });
+                             }} className="text-indigo-600 border-gray-300" />
+                             テキスト直接描画
+                           </label>
+                         </div>
+                       </div>
+
+                       {/* テキストモード専用オプション */}
+                       {logo.logoType === 'text' && (
+                         <div className="pl-3 border-l-2 border-indigo-200 space-y-2">
+                           <div>
+                             <label className="block text-xs font-medium text-gray-700 mb-1">書き方向</label>
+                             <div className="flex gap-4">
+                               <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600">
+                                 <input type="radio" name={`dir-${logo.id}`} checked={logo.textDirection !== 'vertical'} onChange={() => {
+                                   const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, textDirection: 'horizontal' as const } : l);
+                                   updateData({ logos: updated });
+                                 }} className="text-indigo-600 border-gray-300" />
+                                 横書き
+                               </label>
+                               <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600">
+                                 <input type="radio" name={`dir-${logo.id}`} checked={logo.textDirection === 'vertical'} onChange={() => {
+                                   const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, textDirection: 'vertical' as const } : l);
+                                   updateData({ logos: updated });
+                                 }} className="text-indigo-600 border-gray-300" />
+                                 縦書き
+                               </label>
+                             </div>
+                           </div>
+                           <div>
+                             <label className="block text-xs font-medium text-gray-700 mb-1">フォント</label>
+                             <select
+                               className="w-full border-gray-300 rounded focus:ring-indigo-500 p-1.5 border text-sm"
+                               value={logo.textFont || 'gothic'}
+                               onChange={(e) => {
+                                 const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, textFont: e.target.value as any } : l);
+                                 updateData({ logos: updated });
+                               }}
+                             >
+                               <option value="gothic">ゴシック体 (sans-serif)</option>
+                               <option value="mincho">明朝体 (serif)</option>
+                               <option value="english">英字 (Arial/Helvetica)</option>
+                             </select>
+                           </div>
+                         </div>
+                       )}
+
+                       {/* 上部固定 */}
+                       <div className="pt-1">
+                         <label className="flex items-center gap-2 cursor-pointer">
+                           <input 
+                             type="checkbox" 
+                             checked={!!logo.isTopFixed}
+                             onChange={(e) => {
+                               const fixed = e.target.checked;
+                               const updated = (data.logos || []).map(l => l.id === logo.id ? { 
+                                 ...l, 
+                                 isTopFixed: fixed,
+                                 ...(fixed ? { logoX: 50, logoY: 15, logoScale: 18 } : {})
+                               } : l);
+                               updateData({ logos: updated });
+                             }}
+                             className="w-4 h-4 text-indigo-600 rounded border-gray-300"
+                           />
+                           <span className="text-xs font-medium text-gray-700">
+                             上部中央に固定
+                             {logo.isTopFixed && <span className="ml-1 text-indigo-500 font-bold">(中央上部 / サイズ18%)</span>}
+                           </span>
                          </label>
                        </div>
                      </div>
@@ -1224,6 +1362,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                             logoY={logo.logoY ?? 50}
                             logoColor={logo.logoColor}
                             logoOpacity={logo.logoOpacity}
+                            isTopFixed={!!logo.isTopFixed}
                             onUpdate={(x: number, y: number) => {
                                const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoX: x, logoY: y } : l);
                                updateData({ logos: updated });

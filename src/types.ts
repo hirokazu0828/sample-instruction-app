@@ -9,6 +9,9 @@ export interface LogoData {
   logoScale: number;
   logoColor: string;
   logoOpacity: number;
+  isTopFixed?: boolean;
+  textDirection?: 'horizontal' | 'vertical';
+  textFont?: 'gothic' | 'mincho' | 'english';
 }
 
 export type SpecData = {
