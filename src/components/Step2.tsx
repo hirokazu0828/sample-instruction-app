@@ -3,6 +3,81 @@ import { SparklesIcon, ExclamationTriangleIcon, ArrowPathIcon, PhotoIcon } from 
 import type { SpecData } from '../types';
 import specJson from '../data/putter_cover_parametric_v3.json';
 
+const DraggableLogo = ({ logoSrc, logoScale, logoX, logoY, onUpdate }: any) => {
+  const [localX, setLocalX] = useState(logoX);
+  const [localY, setLocalY] = useState(logoY);
+  
+  useEffect(() => {
+    setLocalX(logoX);
+    setLocalY(logoY);
+  }, [logoX, logoY]);
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const parent = e.currentTarget.parentElement;
+    if (!parent) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const initialX = localX;
+    const initialY = localY;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const rect = parent.getBoundingClientRect();
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      const dPercX = (dx / rect.width) * 100;
+      const dPercY = (dy / rect.height) * 100;
+
+      let newX = initialX + dPercX;
+      let newY = initialY + dPercY;
+      newX = Math.max(0, Math.min(100, newX));
+      newY = Math.max(0, Math.min(100, newY));
+
+      setLocalX(newX);
+      setLocalY(newY);
+    };
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      
+      const rect = parent.getBoundingClientRect();
+      const dx = upEvent.clientX - startX;
+      const dy = upEvent.clientY - startY;
+      const dPercX = (dx / rect.width) * 100;
+      const dPercY = (dy / rect.height) * 100;
+
+      let newX = initialX + dPercX;
+      let newY = initialY + dPercY;
+      newX = Math.max(0, Math.min(100, newX));
+      newY = Math.max(0, Math.min(100, newY));
+      
+      onUpdate(newX, newY);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  return (
+    <div
+      className="absolute cursor-move border-[1.5px] border-dashed border-indigo-400 bg-white/20 hover:bg-white/40 transition-colors shadow-sm"
+      style={{
+        left: `${localX}%`,
+        top: `${localY}%`,
+        width: `${logoScale}%`,
+        transform: 'translate(-50%, -50%)',
+        zIndex: 20
+      }}
+      onMouseDown={handleMouseDown}
+    >
+      <img src={logoSrc} draggable={false} className="w-full h-auto pointer-events-none drop-shadow-md" />
+      <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 hover:opacity-100 transition-opacity">ドラッグで移動</div>
+    </div>
+  );
+};
+
 interface Props {
   data: SpecData;
   updateData: (data: Partial<SpecData>) => void;
@@ -17,7 +92,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingStatus, setGeneratingStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({});
   const [logoGeneratingStatus, setLogoGeneratingStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
-  const [compositedImage, setCompositedImage] = useState<string | null>(null);
+  const [transparentLogo, setTransparentLogo] = useState<string | null>(null);
 
   const shapeMap: Record<string, string> = {
     pin: 'ピン型',
@@ -290,66 +365,15 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
 
   useEffect(() => {
     let isCancelled = false;
-    const composite = async () => {
-      const frontUrl = data.generatedImages?.['front_base'] || data.generatedImages?.['front'];
-      if (!frontUrl) {
-         if (!isCancelled) setCompositedImage(null);
-         return;
-      }
-      if (!data.generatedLogo) {
-         if (!isCancelled) setCompositedImage(frontUrl);
-         return;
-      }
-      
-      const transparentLogo = await removeBlackBackground(data.generatedLogo);
-      const frontImg = new Image();
-      frontImg.crossOrigin = 'anonymous';
-      frontImg.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = frontImg.width;
-        canvas.height = frontImg.height;
-        const ctx = canvas.getContext('2d');
-        if(!ctx) return;
-        ctx.drawImage(frontImg, 0, 0);
-        
-        const logoImg = new Image();
-        logoImg.crossOrigin = 'anonymous';
-        logoImg.onload = () => {
-           const scale = (data.logoScale ?? 20) / 100;
-           const logoTargetWidth = canvas.width * scale;
-           const ratio = logoImg.height / Math.max(1, logoImg.width);
-           const logoTargetHeight = logoTargetWidth * ratio;
-           
-           let x = 0;
-           let y = 0;
-           const pos = data.logoPosition || 'bottom-center';
-           const paddingX = canvas.width * 0.05;
-           const paddingY = canvas.height * 0.05;
-           
-           if (pos === 'top-left') {
-             x = paddingX; y = paddingY;
-           } else if (pos === 'top-right') {
-             x = canvas.width - logoTargetWidth - paddingX;
-             y = paddingY;
-           } else if (pos === 'top-center') {
-             x = (canvas.width - logoTargetWidth) / 2;
-             y = paddingY + canvas.height * 0.1;
-           } else if (pos === 'bottom-center') {
-             x = (canvas.width - logoTargetWidth) / 2;
-             y = canvas.height - logoTargetHeight - paddingY - canvas.height * 0.1;
-           }
-           
-           ctx.drawImage(logoImg, x, y, logoTargetWidth, logoTargetHeight);
-           if (!isCancelled) setCompositedImage(canvas.toDataURL('image/png'));
-        };
-        logoImg.src = transparentLogo;
-      };
-      frontImg.src = frontUrl;
-    };
-    
-    composite();
+    if (!data.generatedLogo) {
+      setTransparentLogo(null);
+      return;
+    }
+    removeBlackBackground(data.generatedLogo).then(url => {
+      if (!isCancelled) setTransparentLogo(url);
+    });
     return () => { isCancelled = true; };
-  }, [data.generatedImages?.['front'], data.generatedImages?.['front_base'], data.generatedLogo, data.logoPosition, data.logoScale]);
+  }, [data.generatedLogo]);
 
   const handleGenerateFront = async () => {
     setIsGenerating(true);
@@ -440,12 +464,47 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     const currentImages = { ...data.generatedImages };
     
     try {
-      let sourceImage = compositedImage;
-      if (skipLogo || !data.generatedLogo) {
-         sourceImage = data.generatedImages?.['front_base'] || data.generatedImages?.['front'] || null;
-      }
-      
+      let sourceImage = data.generatedImages?.['front_base'] || data.generatedImages?.['front'] || null;
       if (!sourceImage) throw new Error('元の画像が存在しません。');
+
+      if (!skipLogo && transparentLogo && data.generatedLogo) {
+        sourceImage = await new Promise<string>((resolve) => {
+          const frontImg = new Image();
+          frontImg.crossOrigin = 'anonymous';
+          frontImg.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = frontImg.width;
+            canvas.height = frontImg.height;
+            const ctx = canvas.getContext('2d');
+            if(!ctx) return resolve(sourceImage as string);
+            ctx.drawImage(frontImg, 0, 0);
+            
+            const logoImg = new Image();
+            logoImg.crossOrigin = 'anonymous';
+            logoImg.onload = () => {
+               const scale = (data.logoScale ?? 20) / 100;
+               const logoTargetWidth = canvas.width * scale;
+               const ratio = logoImg.height / Math.max(1, logoImg.width);
+               const logoTargetHeight = logoTargetWidth * ratio;
+               
+               const percX = data.logoX ?? 50;
+               const percY = data.logoY ?? 50;
+               const centerX = (percX / 100) * canvas.width;
+               const centerY = (percY / 100) * canvas.height;
+               
+               const x = centerX - (logoTargetWidth / 2);
+               const y = centerY - (logoTargetHeight / 2);
+               
+               ctx.drawImage(logoImg, x, y, logoTargetWidth, logoTargetHeight);
+               resolve(canvas.toDataURL('image/png'));
+            };
+            logoImg.onerror = () => resolve(sourceImage as string);
+            logoImg.src = transparentLogo;
+          };
+          frontImg.onerror = () => resolve(sourceImage as string);
+          frontImg.src = sourceImage as string;
+        });
+      }
 
       const pureB64 = sourceImage.replace(/^data:image\/\w+;base64,/, '');
 
@@ -942,20 +1001,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                 
                 {data.generatedLogo && (
                   <>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">ロゴ位置</label>
-                        <select
-                          className="w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 p-2 border text-sm"
-                          value={data.logoPosition || 'bottom-center'}
-                          onChange={(e) => updateData({ logoPosition: e.target.value as any })}
-                        >
-                          <option value="top-center">上部中央</option>
-                          <option value="bottom-center">下部中央</option>
-                          <option value="top-left">左上</option>
-                          <option value="top-right">右上</option>
-                        </select>
-                      </div>
+                    <div className="grid grid-cols-1 gap-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">サイズ ({data.logoScale || 20}%)</label>
                         <input
@@ -1027,16 +1073,27 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
             ].map(opt => {
               const status = generatingStatus[opt.id === 'front' ? 'front' : 'multiview'];
               const isFrontPreview = opt.id === 'front';
-              let imageUrl = isFrontPreview ? compositedImage || data.generatedImages?.['front_base'] : data.generatedImages?.[opt.id];
+              let imageUrl = isFrontPreview ? data.generatedImages?.['front_base'] : data.generatedImages?.[opt.id];
               
               return (
-                <div key={opt.id} className="w-full h-48 bg-gray-100 rounded border border-gray-200 flex flex-col overflow-hidden relative group">
+                <div key={opt.id} className="w-full aspect-square bg-gray-100 rounded border border-gray-200 flex flex-col overflow-hidden relative group">
                   <div className="absolute top-2 left-2 bg-black/60 text-white text-xs font-bold px-2 py-1 rounded z-10 flex items-center gap-1">
                     {opt.label}
                   </div>
                   
                   {imageUrl ? (
-                    <img src={imageUrl} alt={opt.label} className="w-full h-full object-contain bg-white" />
+                    <div className="relative w-full h-full">
+                      <img src={imageUrl} alt={opt.label} className="w-full h-full object-cover bg-white pointer-events-none" />
+                      {isFrontPreview && transparentLogo && (
+                        <DraggableLogo
+                          logoSrc={transparentLogo}
+                          logoScale={data.logoScale ?? 20}
+                          logoX={data.logoX ?? 50}
+                          logoY={data.logoY ?? 50}
+                          onUpdate={(x: number, y: number) => updateData({ logoX: x, logoY: y })}
+                        />
+                      )}
+                    </div>
                   ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
                       {status === 'loading' ? (

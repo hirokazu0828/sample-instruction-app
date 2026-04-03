@@ -68,7 +68,8 @@ export type SpecData = {
   logoText?: string;
   logoType?: 'icon' | 'text';
   generatedLogo?: string;
-  logoPosition?: 'top-center' | 'bottom-center' | 'top-left' | 'top-right';
+  logoX?: number;
+  logoY?: number;
   logoScale?: number;
 };
 
@@ -122,7 +123,8 @@ export const initialSpecData: SpecData = {
     { id: '2', technique: '', threadType: '', threadNumber: '', size: '', placement: '' },
     { id: '3', technique: '', threadType: '', threadNumber: '', size: '', placement: '' },
   ],
-  logoPosition: 'bottom-center',
+  logoX: 50,
+  logoY: 50,
   logoScale: 20,
   logoType: 'icon',
 };
