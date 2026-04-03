@@ -481,6 +481,29 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     return () => { isCancelled = true; };
   }, [data.topLogos]);
 
+  // ロゴ情報をプロンプトに追加するための共通ヘルパー
+  const buildLogoPromptAdditions = () => {
+    if (!data.logos || data.logos.length === 0) return '';
+    const colorMap: Record<string, string> = {
+      '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
+      '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green',
+      '#ffa500': 'orange', '#800080': 'purple',
+    };
+    const parts = data.logos.map(l => {
+      const typeStr = PROCESSING_TYPES[l.processingType] || 'logo';
+      const colorName = l.logoColor && l.logoColor !== '#ffffff'
+        ? (colorMap[l.logoColor.toLowerCase()] || l.logoColor)
+        : '';
+      const textPart = l.logoText ? `'${l.logoText}'` : '';
+      const dirStr = l.logoType === 'text'
+        ? (l.textDirection === 'vertical' ? 'vertical text arrangement, top to bottom' : 'horizontal text')
+        : '';
+      const placementStr = l.isTopFixed ? 'at top center' : 'centered on front panel';
+      return [colorName, typeStr, dirStr, textPart, placementStr].filter(Boolean).join(' ');
+    });
+    return ` with ${parts.join(' and ')}`;
+  };
+
   const handleGenerateFront = async () => {
     setIsGenerating(true);
     const currentImages = { ...data.generatedImages };
@@ -492,38 +515,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       const pPiping = getLabel(specJson.parameters.piping, data.piping || '') || 'standard';
       const pHardware = getLabel(specJson.parameters.hardware_finish, data.hardwareFinish || '') || 'standard';
       
-      let logoPromptAdditions = '';
-      if (data.logos && data.logos.length > 0) {
-         const logoParts = data.logos.map(l => {
-           let typeStr = PROCESSING_TYPES[l.processingType] || 'logo';
-           let colorName = '';
-           if (l.logoColor && l.logoColor !== '#ffffff') {
-             // Map common hex colors to names for better prompt clarity
-             const colorMap: Record<string, string> = {
-               '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
-               '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green',
-               '#ffa500': 'orange', '#800080': 'purple',
-             };
-             colorName = colorMap[l.logoColor.toLowerCase()] || l.logoColor;
-           }
-           let textPart = l.logoText ? `'${l.logoText}'` : '';
-           let dirStr = '';
-           if (l.logoType === 'text') {
-             dirStr = l.textDirection === 'vertical'
-               ? 'vertical text arrangement, top to bottom'
-               : 'horizontal text';
-           }
-           let placementStr = l.isTopFixed ? 'at top center' : 'centered on front panel';
-           return [
-             colorName,
-             typeStr,
-             dirStr,
-             textPart,
-             placementStr
-           ].filter(Boolean).join(' ');
-         });
-         logoPromptAdditions = ` with ${logoParts.join(' and ')}`;
-      }
+      const logoPromptAdditions = buildLogoPromptAdditions();
       
       const basePrompt = `A highly detailed professional product photograph of a golf putter cover. Shape: ${data.headShape || 'standard'}, Color: ${pColor}, Fabric material: ${pFabric}, Piping: ${pPiping}, Hardware Finish: ${pHardware}.${logoPromptAdditions} Studio lighting, clean white background, high quality, 8k resolution.`;
 
@@ -564,27 +556,6 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     }
   };
 
-  const buildLogoPromptAdditions = () => {
-    if (!data.logos || data.logos.length === 0) return '';
-    const colorMap: Record<string, string> = {
-      '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
-      '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green',
-      '#ffa500': 'orange', '#800080': 'purple',
-    };
-    const parts = data.logos.map(l => {
-      const typeStr = PROCESSING_TYPES[l.processingType] || 'logo';
-      const colorName = l.logoColor && l.logoColor !== '#ffffff'
-        ? (colorMap[l.logoColor.toLowerCase()] || l.logoColor)
-        : '';
-      const textPart = l.logoText ? `'${l.logoText}'` : '';
-      const dirStr = l.logoType === 'text'
-        ? (l.textDirection === 'vertical' ? 'vertical text arrangement, top to bottom' : 'horizontal text')
-        : '';
-      const placementStr = l.isTopFixed ? 'at top center' : 'centered on front panel';
-      return [colorName, typeStr, dirStr, textPart, placementStr].filter(Boolean).join(' ');
-    });
-    return ` with ${parts.join(' and ')}`;
-  };
 
   const handleGenerateTop = async () => {
     const frontBase = data.generatedImages?.['front_base'];
