@@ -1,3 +1,16 @@
+export interface LogoData {
+  id: string;
+  processingType: string;
+  logoText: string;
+  logoType: 'icon' | 'text';
+  generatedLogo?: string;
+  logoX: number;
+  logoY: number;
+  logoScale: number;
+  logoColor: string;
+  logoOpacity: number;
+}
+
 export type SpecData = {
   // STEP1
   productCode: string;
@@ -65,12 +78,7 @@ export type SpecData = {
   imageQuality?: 'low' | 'medium' | 'high';
 
   // Logo fields
-  logoText?: string;
-  logoType?: 'icon' | 'text';
-  generatedLogo?: string;
-  logoX?: number;
-  logoY?: number;
-  logoScale?: number;
+  logos: LogoData[];
 };
 
 export const initialSpecData: SpecData = {
@@ -123,9 +131,6 @@ export const initialSpecData: SpecData = {
     { id: '2', technique: '', threadType: '', threadNumber: '', size: '', placement: '' },
     { id: '3', technique: '', threadType: '', threadNumber: '', size: '', placement: '' },
   ],
-  logoX: 50,
-  logoY: 50,
-  logoScale: 20,
-  logoType: 'icon',
+  logos: [],
 };
 

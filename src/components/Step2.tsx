@@ -3,7 +3,18 @@ import { SparklesIcon, ExclamationTriangleIcon, ArrowPathIcon, PhotoIcon } from 
 import type { SpecData } from '../types';
 import specJson from '../data/putter_cover_parametric_v3.json';
 
-const DraggableLogo = ({ logoSrc, logoScale, logoX, logoY, onUpdate }: any) => {
+const PROCESSING_TYPES: Record<string, string> = {
+  普通刺繍: "embroidered logo, flat embroidery stitching",
+  振り刺繍: "satin stitch embroidery, directional thread",
+  畳刺繍: "tatami stitch embroidery, woven texture",
+  畳立体刺繍: "3D raised embroidery, padded tatami stitch",
+  文字型土台畳刺繍: "raised letter embroidery on base",
+  金属プレート: "metal plate badge, engraved logo",
+  シリコンパッチ: "silicone rubber patch logo",
+  プリント: "printed logo, flat print"
+};
+
+const DraggableLogo = ({ logoSrc, logoScale, logoX, logoY, logoColor, logoOpacity, onUpdate }: any) => {
   const [localX, setLocalX] = useState(logoX);
   const [localY, setLocalY] = useState(logoY);
   
@@ -72,7 +83,23 @@ const DraggableLogo = ({ logoSrc, logoScale, logoX, logoY, onUpdate }: any) => {
       }}
       onMouseDown={handleMouseDown}
     >
-      <img src={logoSrc} draggable={false} className="w-full h-auto pointer-events-none drop-shadow-md" />
+      <div 
+         style={{ width: '100%', display: 'flex' }}
+      >
+        <img src={logoSrc} className="w-full h-auto opacity-0 pointer-events-none" />
+        <div className="absolute inset-0 pointer-events-none" style={{
+            maskImage: `url(${logoSrc})`,
+            WebkitMaskImage: `url(${logoSrc})`,
+            maskSize: 'contain',
+            WebkitMaskSize: 'contain',
+            maskRepeat: 'no-repeat',
+            WebkitMaskRepeat: 'no-repeat',
+            maskPosition: 'center',
+            WebkitMaskPosition: 'center',
+            backgroundColor: logoColor || '#ffffff',
+            opacity: typeof logoOpacity === 'number' ? logoOpacity / 100 : 1
+        }} />
+      </div>
       <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 hover:opacity-100 transition-opacity">ドラッグで移動</div>
     </div>
   );
@@ -91,8 +118,8 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
   const [showToast, setShowToast] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingStatus, setGeneratingStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({});
-  const [logoGeneratingStatus, setLogoGeneratingStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
-  const [transparentLogo, setTransparentLogo] = useState<string | null>(null);
+  const [logoGeneratingStatus, setLogoGeneratingStatus] = useState<Record<string, 'loading' | 'done' | 'error'>>({});
+  const [transparentLogos, setTransparentLogos] = useState<Record<string, string>>({});
 
   const shapeMap: Record<string, string> = {
     pin: 'ピン型',
@@ -365,15 +392,20 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
 
   useEffect(() => {
     let isCancelled = false;
-    if (!data.generatedLogo) {
-      setTransparentLogo(null);
-      return;
-    }
-    removeBlackBackground(data.generatedLogo).then(url => {
-      if (!isCancelled) setTransparentLogo(url);
-    });
+    const loadTransparentLogos = async () => {
+      const newTransparent: Record<string, string> = { ...transparentLogos };
+      let changed = false;
+      for (const logo of data.logos || []) {
+        if (logo.generatedLogo && !newTransparent[logo.id]) {
+           newTransparent[logo.id] = await removeBlackBackground(logo.generatedLogo);
+           changed = true;
+        }
+      }
+      if (!isCancelled && changed) setTransparentLogos(newTransparent);
+    };
+    loadTransparentLogos();
     return () => { isCancelled = true; };
-  }, [data.generatedLogo]);
+  }, [data.logos]);
 
   const handleGenerateFront = async () => {
     setIsGenerating(true);
@@ -386,7 +418,13 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       const pPiping = getLabel(specJson.parameters.piping, data.piping || '') || 'standard';
       const pHardware = getLabel(specJson.parameters.hardware_finish, data.hardwareFinish || '') || 'standard';
       
-      const basePrompt = `A highly detailed professional product photograph of a golf putter cover. Shape: ${data.headShape || 'standard'}, Color: ${pColor}, Fabric material: ${pFabric}, Piping: ${pPiping}, Hardware Finish: ${pHardware}. Studio lighting, clean white background, high quality, 8k resolution.`;
+      let logoPromptAdditions = '';
+      if (data.logos && data.logos.length > 0) {
+         const types = data.logos.map(l => PROCESSING_TYPES[l.processingType] || 'logo');
+         logoPromptAdditions = ` with ${types.join(' and ')}, centered on front panel`;
+      }
+      
+      const basePrompt = `A highly detailed professional product photograph of a golf putter cover. Shape: ${data.headShape || 'standard'}, Color: ${pColor}, Fabric material: ${pFabric}, Piping: ${pPiping}, Hardware Finish: ${pHardware}.${logoPromptAdditions} Studio lighting, clean white background, high quality, 8k resolution.`;
 
       setGeneratingStatus({ front: 'loading' });
       
@@ -414,7 +452,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       
       currentImages['front'] = frontUrl;
       currentImages['front_base'] = frontUrl;
-      updateData({ generatedImages: { ...currentImages }, generatedLogo: undefined });
+      updateData({ generatedImages: { ...currentImages } });
       setGeneratingStatus({ front: 'done' });
     } catch (e) {
       console.error(e);
@@ -425,13 +463,16 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     }
   };
 
-  const handleGenerateLogo = async () => {
-    if (!data.logoText) return;
-    setLogoGeneratingStatus('loading');
+  const handleGenerateLogo = async (logoId: string) => {
+    const targetLogo = (data.logos || []).find(l => l.id === logoId);
+    if (!targetLogo || !targetLogo.logoText) return;
+    
+    setLogoGeneratingStatus(prev => ({ ...prev, [logoId]: 'loading' }));
     try {
-      const prompt = data.logoType === 'text' 
-        ? `bold typography logo, '${data.logoText}' text in white, pure black background, modern street style font, clean minimal design`
-        : `minimalist brand logo mark for '${data.logoText}', white icon symbol on pure black background, simple geometric shape, no letters, no text, street style golf brand icon, clean vector style`;
+      const typePrompt = PROCESSING_TYPES[targetLogo.processingType] || "logo";
+      const prompt = targetLogo.logoType === 'text' 
+        ? `bold typography logo, '${targetLogo.logoText}' text in white, pure black background, modern street style font, clean minimal design, ${typePrompt}`
+        : `minimalist brand logo mark for '${targetLogo.logoText}', white icon symbol on pure black background, simple geometric shape, no letters, no text, street style golf brand icon, clean vector style, ${typePrompt}`;
         
       const res = await fetch('/api/generate-image', {
         method: 'POST',
@@ -449,12 +490,15 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       }
       if (!logoUrl) throw new Error('Invalid logo format');
       
-      updateData({ generatedLogo: logoUrl });
-      setLogoGeneratingStatus('done');
+      const updatedLogos = (data.logos || []).map(l => 
+        l.id === logoId ? { ...l, generatedLogo: logoUrl } : l
+      );
+      updateData({ logos: updatedLogos });
+      setLogoGeneratingStatus(prev => ({ ...prev, [logoId]: 'done' }));
     } catch (e) {
       console.error(e);
       alert('ロゴ生成中にエラーが発生しました。');
-      setLogoGeneratingStatus('error');
+      setLogoGeneratingStatus(prev => ({ ...prev, [logoId]: 'error' }));
     }
   };
 
@@ -467,11 +511,13 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       let sourceImage = data.generatedImages?.['front_base'] || data.generatedImages?.['front'] || null;
       if (!sourceImage) throw new Error('元の画像が存在しません。');
 
-      if (!skipLogo && transparentLogo && data.generatedLogo) {
+      const activeLogos = (data.logos || []).filter(l => l.generatedLogo && transparentLogos[l.id]);
+
+      if (!skipLogo && activeLogos.length > 0) {
         sourceImage = await new Promise<string>((resolve) => {
           const frontImg = new Image();
           frontImg.crossOrigin = 'anonymous';
-          frontImg.onload = () => {
+          frontImg.onload = async () => {
             const canvas = document.createElement('canvas');
             canvas.width = frontImg.width;
             canvas.height = frontImg.height;
@@ -479,27 +525,49 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
             if(!ctx) return resolve(sourceImage as string);
             ctx.drawImage(frontImg, 0, 0);
             
-            const logoImg = new Image();
-            logoImg.crossOrigin = 'anonymous';
-            logoImg.onload = () => {
-               const scale = (data.logoScale ?? 20) / 100;
-               const logoTargetWidth = canvas.width * scale;
-               const ratio = logoImg.height / Math.max(1, logoImg.width);
-               const logoTargetHeight = logoTargetWidth * ratio;
-               
-               const percX = data.logoX ?? 50;
-               const percY = data.logoY ?? 50;
-               const centerX = (percX / 100) * canvas.width;
-               const centerY = (percY / 100) * canvas.height;
-               
-               const x = centerX - (logoTargetWidth / 2);
-               const y = centerY - (logoTargetHeight / 2);
-               
-               ctx.drawImage(logoImg, x, y, logoTargetWidth, logoTargetHeight);
-               resolve(canvas.toDataURL('image/png'));
-            };
-            logoImg.onerror = () => resolve(sourceImage as string);
-            logoImg.src = transparentLogo;
+            for (const logo of activeLogos) {
+              await new Promise<void>((resolveLogo) => {
+                const logoImg = new Image();
+                logoImg.crossOrigin = 'anonymous';
+                logoImg.onload = () => {
+                   let opacity = typeof logo.logoOpacity === 'number' ? logo.logoOpacity / 100 : 1;
+                   ctx.globalAlpha = opacity;
+                   
+                   const tempCanvas = document.createElement('canvas');
+                   tempCanvas.width = logoImg.width;
+                   tempCanvas.height = logoImg.height;
+                   const tCtx = tempCanvas.getContext('2d');
+                   if (tCtx) {
+                      tCtx.drawImage(logoImg, 0, 0);
+                      if (logo.logoColor && logo.logoColor !== '#ffffff') {
+                          tCtx.globalCompositeOperation = 'source-in';
+                          tCtx.fillStyle = logo.logoColor;
+                          tCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+                      }
+                   }
+
+                   const scale = (logo.logoScale ?? 20) / 100;
+                   const logoTargetWidth = canvas.width * scale;
+                   const ratio = logoImg.height / Math.max(1, logoImg.width);
+                   const logoTargetHeight = logoTargetWidth * ratio;
+                   
+                   const percX = logo.logoX ?? 50;
+                   const percY = logo.logoY ?? 50;
+                   const centerX = (percX / 100) * canvas.width;
+                   const centerY = (percY / 100) * canvas.height;
+                   
+                   const x = centerX - (logoTargetWidth / 2);
+                   const y = centerY - (logoTargetHeight / 2);
+                   
+                   ctx.drawImage(tempCanvas.width > 0 ? tempCanvas : logoImg, x, y, logoTargetWidth, logoTargetHeight);
+                   ctx.globalAlpha = 1.0;
+                   resolveLogo();
+                };
+                logoImg.onerror = () => resolveLogo();
+                logoImg.src = transparentLogos[logo.id];
+              });
+            }
+            resolve(canvas.toDataURL('image/png'));
           };
           frontImg.onerror = () => resolve(sourceImage as string);
           frontImg.src = sourceImage as string;
@@ -528,7 +596,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           currentImages[key] = slices[idx];
         });
         
-        if (!skipLogo && data.generatedLogo) {
+        if (!skipLogo && activeLogos.length > 0) {
            currentImages['front'] = sourceImage;
         } else {
            currentImages['front'] = currentImages['front_base'] || currentImages['front'];
@@ -955,73 +1023,133 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
               </div>
             </div>
             
-            <div className="flex flex-col lg:flex-row gap-6">
-              <div className="flex-1 space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">ロゴテキスト / キーワード</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      className="flex-1 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 p-2 border text-sm"
-                      placeholder="例：Golf Street Lab, GSL"
-                      value={data.logoText || ''}
-                      onChange={(e) => updateData({ logoText: e.target.value })}
-                    />
-                    <button
-                      onClick={handleGenerateLogo}
-                      disabled={logoGeneratingStatus === 'loading' || !data.logoText}
-                      className="bg-gray-800 hover:bg-gray-900 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded shadow transition-colors text-sm flex items-center whitespace-nowrap"
-                    >
-                      {logoGeneratingStatus === 'loading' ? '生成中...' : data.generatedLogo ? '再生成' : 'ロゴを生成'}
-                    </button>
-                  </div>
-                  <div className="flex gap-4 mt-2">
-                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
-                      <input 
-                        type="radio" 
-                        name="logoType" 
-                        checked={(!data.logoType || data.logoType === 'icon')} 
-                        onChange={() => updateData({ logoType: 'icon' })}
-                        className="text-indigo-600 focus:ring-indigo-500 border-gray-300"
-                      />
-                      アイコン生成
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
-                      <input 
-                        type="radio" 
-                        name="logoType" 
-                        checked={data.logoType === 'text'} 
-                        onChange={() => updateData({ logoType: 'text' })}
-                        className="text-indigo-600 focus:ring-indigo-500 border-gray-300"
-                      />
-                      テキストロゴ
-                    </label>
-                  </div>
+            <div className="flex flex-col gap-6">
+              {(data.logos || []).map((logo, idx) => (
+                <div key={logo.id} className="p-4 bg-white border border-gray-200 rounded-lg shadow-sm relative">
+                   <button 
+                     onClick={() => {
+                       const updated = (data.logos || []).filter(l => l.id !== logo.id);
+                       updateData({ logos: updated });
+                     }}
+                     className="absolute top-2 right-2 text-gray-400 hover:text-red-500"
+                   >✕</button>
+                   <h5 className="font-bold text-sm text-gray-700 mb-3">ロゴ/刺繍 {idx + 1}</h5>
+                   
+                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                     <div className="space-y-3">
+                       <div>
+                         <label className="block text-xs font-medium text-gray-700 mb-1">加工タイプ</label>
+                         <select 
+                           className="w-full border-gray-300 rounded focus:ring-indigo-500 p-2 border text-sm"
+                           value={logo.processingType}
+                           onChange={(e) => {
+                             const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, processingType: e.target.value } : l);
+                             updateData({ logos: updated });
+                           }}
+                         >
+                           {Object.keys(PROCESSING_TYPES).map(type => (
+                             <option key={type} value={type}>{type}</option>
+                           ))}
+                         </select>
+                       </div>
+                       <div>
+                         <label className="block text-xs font-medium text-gray-700 mb-1">ロゴテキスト / キーワード</label>
+                         <div className="flex gap-2">
+                           <input
+                             type="text"
+                             className="flex-1 border-gray-300 rounded-sm focus:ring-indigo-500 p-1.5 border text-sm"
+                             placeholder="Golf Street Lab"
+                             value={logo.logoText || ''}
+                             onChange={(e) => {
+                               const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoText: e.target.value } : l);
+                               updateData({ logos: updated });
+                             }}
+                           />
+                           <button
+                             onClick={() => handleGenerateLogo(logo.id)}
+                             disabled={logoGeneratingStatus[logo.id] === 'loading' || !logo.logoText}
+                             className="bg-gray-800 hover:bg-gray-900 disabled:bg-gray-400 text-white font-medium px-3 rounded shadow transition-colors text-xs whitespace-nowrap"
+                           >
+                             {logoGeneratingStatus[logo.id] === 'loading' ? '生成中...' : logo.generatedLogo ? '再生成' : '生成'}
+                           </button>
+                         </div>
+                       </div>
+                       <div className="flex gap-4">
+                         <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600">
+                           <input type="radio" checked={logo.logoType === 'icon'} onChange={() => {
+                             const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoType: 'icon' as any } : l);
+                             updateData({ logos: updated });
+                           }} className="text-indigo-600 border-gray-300" />
+                           アイコン
+                         </label>
+                         <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600">
+                           <input type="radio" checked={logo.logoType === 'text'} onChange={() => {
+                             const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoType: 'text' as any } : l);
+                             updateData({ logos: updated });
+                           }} className="text-indigo-600 border-gray-300" />
+                           テキスト
+                         </label>
+                       </div>
+                     </div>
+                     
+                     {logo.generatedLogo && (
+                       <div className="space-y-3 border-t lg:border-t-0 lg:border-l border-gray-100 pt-3 lg:pt-0 lg:pl-4">
+                         <div className="flex gap-4 items-start">
+                           <div className="w-16 h-16 bg-black rounded shadow-inner flex items-center justify-center shrink-0 border border-gray-300">
+                             <img src={logo.generatedLogo} alt="Generated" className="max-w-full max-h-full" />
+                           </div>
+                           <div className="flex-1 space-y-2">
+                             <div>
+                               <label className="block text-xs font-medium text-gray-700 mb-1">サイズ ({logo.logoScale}%)</label>
+                               <input type="range" min="5" max="80" value={logo.logoScale} onChange={(e) => {
+                                 const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoScale: parseInt(e.target.value) } : l);
+                                 updateData({ logos: updated });
+                               }} className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
+                             </div>
+                             <div className="flex gap-3">
+                               <div className="flex-1">
+                                 <label className="block text-xs font-medium text-gray-700 mb-1 flex justify-between tracking-tighter">色 <span>{logo.logoColor}</span></label>
+                                 <input type="color" value={logo.logoColor} onChange={(e) => {
+                                   const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoColor: e.target.value } : l);
+                                   updateData({ logos: updated });
+                                 }} className="w-full h-6 rounded cursor-pointer border border-gray-200" />
+                               </div>
+                               <div className="flex-1">
+                                 <label className="block text-xs font-medium text-gray-700 mb-1">透明度 ({logo.logoOpacity}%)</label>
+                                 <input type="range" min="10" max="100" value={logo.logoOpacity} onChange={(e) => {
+                                   const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoOpacity: parseInt(e.target.value) } : l);
+                                   updateData({ logos: updated });
+                                 }} className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer mt-2" />
+                               </div>
+                             </div>
+                           </div>
+                         </div>
+                       </div>
+                     )}
+                   </div>
                 </div>
-                
-                {data.generatedLogo && (
-                  <>
-                    <div className="grid grid-cols-1 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">サイズ ({data.logoScale || 20}%)</label>
-                        <input
-                          type="range"
-                          min="10"
-                          max="40"
-                          value={data.logoScale || 20}
-                          onChange={(e) => updateData({ logoScale: parseInt(e.target.value) })}
-                          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer mt-2"
-                        />
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
+              ))}
               
-              {data.generatedLogo && (
-                <div className="w-24 h-24 bg-black rounded shadow-inner flex items-center justify-center shrink-0 border border-gray-300">
-                  <img src={data.generatedLogo} alt="Generated Logo" className="max-w-full max-h-full" />
-                </div>
+              {(!data.logos || data.logos.length < 5) && (
+                 <button
+                   onClick={() => {
+                     const newLogo: any = {
+                       id: Date.now().toString(),
+                       processingType: Object.keys(PROCESSING_TYPES)[0], // 普通刺繍
+                       logoText: '',
+                       logoType: 'icon',
+                       logoX: 50,
+                       logoY: 50,
+                       logoScale: 20,
+                       logoColor: '#ffffff',
+                       logoOpacity: 100
+                     };
+                     updateData({ logos: [...(data.logos || []), newLogo] });
+                   }}
+                   className="w-full py-2 border-2 text-sm border-dashed border-gray-300 text-gray-500 rounded hover:bg-white hover:text-indigo-600 hover:border-indigo-300 transition-colors font-bold"
+                 >
+                   ＋ ロゴ・刺繍を追加
+                 </button>
               )}
             </div>
           </div>
@@ -1084,15 +1212,25 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                   {imageUrl ? (
                     <div className="relative w-full h-full">
                       <img src={imageUrl} alt={opt.label} className="w-full h-full object-cover bg-white pointer-events-none" />
-                      {isFrontPreview && transparentLogo && (
-                        <DraggableLogo
-                          logoSrc={transparentLogo}
-                          logoScale={data.logoScale ?? 20}
-                          logoX={data.logoX ?? 50}
-                          logoY={data.logoY ?? 50}
-                          onUpdate={(x: number, y: number) => updateData({ logoX: x, logoY: y })}
-                        />
-                      )}
+                      {isFrontPreview && (data.logos || []).map(logo => {
+                        const tSrc = transparentLogos[logo.id];
+                        if (!tSrc) return null;
+                        return (
+                          <DraggableLogo
+                            key={logo.id}
+                            logoSrc={tSrc}
+                            logoScale={logo.logoScale ?? 20}
+                            logoX={logo.logoX ?? 50}
+                            logoY={logo.logoY ?? 50}
+                            logoColor={logo.logoColor}
+                            logoOpacity={logo.logoOpacity}
+                            onUpdate={(x: number, y: number) => {
+                               const updated = (data.logos || []).map(l => l.id === logo.id ? { ...l, logoX: x, logoY: y } : l);
+                               updateData({ logos: updated });
+                            }}
+                          />
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
