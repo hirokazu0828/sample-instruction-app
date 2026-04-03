@@ -216,14 +216,14 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
                 )}
                 <span className="text-[10px] font-bold mt-1 text-gray-700">正面 (高画質)</span>
               </div>
-              {/* 斜め正面 */}
+              {/* ネック刺繍済み */}
               <div className="flex-1 flex flex-col items-center bg-white p-1 border rounded shadow-sm print:shadow-none print:border-gray-300">
-                {data.generatedImages?.oblique_front ? (
-                  <img src={data.generatedImages.oblique_front} alt="斜め正面" className="w-full h-auto object-contain flex-1 min-h-0" />
+                {(data.generatedImages?.neck_embroidered || data.generatedImages?.top) ? (
+                  <img src={data.generatedImages.neck_embroidered || data.generatedImages.top} alt="ネック" className="w-full h-auto object-contain flex-1 min-h-0" />
                 ) : (
-                  <div className="w-full flex-1 min-h-[160px] bg-gray-100 flex items-center justify-center text-gray-400 text-xs text-center p-2 rounded">画像未生成<br/>(斜め正面)</div>
+                  <div className="w-full flex-1 min-h-[160px] bg-gray-100 flex items-center justify-center text-gray-400 text-xs text-center p-2 rounded">画像未生成<br/>(ネック刺繍)</div>
                 )}
-                <span className="text-[10px] font-bold mt-1 text-gray-700">斜め正面 (3D)</span>
+                <span className="text-[10px] font-bold mt-1 text-gray-700">ネック (刺繍済)</span>
               </div>
             </div>
           </div>
@@ -406,6 +406,33 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
             <button onClick={() => updateParts([...localParts, { id: Date.now().toString(), label: getColLabel(localParts.length), usage: '', material: '', partNumber: '', quantity: '', colorName: '', threadNumber: '', colorSwatch: '#cccccc' }])} className="text-indigo-600 text-sm font-bold flex items-center mt-3 print:hidden"><PlusIcon className="w-4 h-4 mr-1"/> 部位を追加</button>
           )}
         </div>
+
+        {/* ネック刺繍詳細セクション + 6アングル */}
+        <div className="mt-6">
+          <h4 className="font-bold text-sm mb-3 border-b border-gray-300 pb-1">ネック部詳細（刺繍仕上げ）・全アングルイメージ</h4>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {/* ネック全体 */}
+            {(data.generatedImages?.neck_embroidered || data.generatedImages?.top) && (
+              <div className="flex flex-col items-center">
+                <img src={data.generatedImages.neck_embroidered || data.generatedImages.top!} alt="ネック" className="w-full aspect-square object-cover rounded border border-orange-300 shadow-sm" />
+                <span className="text-[10px] mt-1 font-bold text-orange-700">ネック (刺繍済)</span>
+              </div>
+            )}
+            {/* 6アングル */}
+            {['oblique_front','oblique_back','front_3d','oblique_right','oblique_left','side'].map(key => (
+              data.generatedImages?.[key] ? (
+                <div key={key} className="flex flex-col items-center">
+                  <img src={data.generatedImages[key]} alt={key} className="w-full aspect-square object-cover rounded border border-gray-200 shadow-sm" />
+                  <span className="text-[10px] mt-1 text-gray-500">{{
+                    oblique_front: '斜め正面', oblique_back: '斜め背面',
+                    front_3d: '正面(3D)', oblique_right: '斜め右',
+                    oblique_left: '斜め左', side: '側面'
+                  }[key]}</span>
+                </div>
+              ) : null
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* ======================= PAGE 3 ======================= */}
@@ -417,11 +444,32 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
             <span className="bg-[#16a34a] text-white px-4 py-1 font-bold text-lg inline-block print-bg-green">3. 刺繍・プリント・高周波</span>
             <span className="font-bold text-gray-700">刺绣・印刷等</span>
           </div>
-          <div className="print:hidden">
+          <div className="print:hidden flex gap-2">
             <label className="flex items-center gap-2 cursor-pointer bg-gray-100 px-3 py-1 rounded border border-gray-300 hover:bg-gray-200 transition-colors">
               <input type="checkbox" checked={showPage3Images} onChange={e => setShowPage3Images(e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-gray-300" />
               <span className="text-sm font-bold text-gray-700">参考画像を表示する</span>
             </label>
+            {(data.logos?.length || data.topLogos?.length) ? (
+              <button
+                onClick={() => {
+                  const allLogos = [...(data.logos || []), ...(data.topLogos || [])];
+                  const newEmbs = allLogos.map((l, i) => ({
+                    id: `auto_${i}_${Date.now()}`,
+                    technique: l.processingType || '',
+                    threadType: l.logoColor?.toLowerCase().includes('gold') || l.logoColor === '#ffd700' ? 'メタリック糸' : '標準刺繍糸',
+                    threadNumber: l.logoColor || '',
+                    size: '',
+                    placement: l.isTopFixed ? 'ネック中央' : '前面パネル',
+                  }));
+                  updateEmbroideries(newEmbs);
+                  setShowToast(true);
+                  setTimeout(() => setShowToast(false), 2000);
+                }}
+                className="bg-green-600 hover:bg-green-700 text-white text-sm font-bold px-3 py-1 rounded border border-green-700 transition-colors"
+              >
+                ロゴ設定から自動入力
+              </button>
+            ) : null}
           </div>
         </div>
 

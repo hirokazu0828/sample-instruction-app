@@ -595,9 +595,10 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     try {
       const pColor = getLabel(specJson.parameters.body_color, data.bodyColor || '') || 'neutral';
       const pFabric = getLabel(specJson.parameters.body_fabric, data.bodyFabric || '') || 'standard';
-      const logoAdditions = buildLogoPromptAdditions();
+      const logoAdditions = buildLogoPromptAdditions(); // ネック画像には現状未使用（将来針山用）
+      void logoAdditions;
 
-      const topPrompt = `same exact product, putter head cover in ${pColor} ${pFabric}, view from directly above, top-down bird's eye view, showing the neck opening and top surface of the putter cover, same color and material${logoAdditions}, white studio background, high quality`;
+      const neckPrompt = `same exact product, rear view from slightly above, showing the neck tube and shaft opening clearly, neck area in focus, ${pColor} ${pFabric} putter head cover, same color and material, white studio background, high quality product photo`;
 
       // front_baseはdata:URLまたはhttps://URLの両方がありうる。
       // どちらでもbase64文字列に変換してから送信する。
@@ -623,26 +624,131 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: topPrompt,
+          prompt: neckPrompt,
           imageBase64: imgBase64,
-          quality: 'low'   // トップ画像はlow固定（高コスト防止）
+          quality: 'low'
         })
       });
-      if (!res.ok) throw new Error('Failed to generate top image');
+      if (!res.ok) throw new Error('Failed to generate neck image');
       const dataTop = await res.json();
       const b64 = dataTop?.data?.[0]?.b64_json;
       let topUrl = '';
       if (b64) topUrl = `data:image/png;base64,${b64}`;
       else if (dataTop?.data?.[0]?.url) topUrl = dataTop.data[0].url;
-      if (!topUrl) throw new Error('Invalid top image format');
+      if (!topUrl) throw new Error('Invalid neck image format');
 
       const newImages = { ...data.generatedImages, top: topUrl };
       updateData({ generatedImages: newImages });
       setGeneratingStatus(prev => ({ ...prev, top: 'done' }));
     } catch (e) {
       console.error(e);
-      alert('上部画像生成中にエラーが発生しました。');
+      alert('ネック画像生成中にエラーが発生しました。');
       setGeneratingStatus(prev => ({ ...prev, top: 'error' }));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // URL または dataURL を raw base64 文字列に変換するヘルパー
+  const imageUrlToBase64 = async (url: string): Promise<string> => {
+    if (url.startsWith('data:')) {
+      return url.replace(/^data:image\/\w+;base64,/, '');
+    }
+    const fetched = await fetch(url);
+    const blob = await fetched.blob();
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve((reader.result as string).replace(/^data:image\/\w+;base64,/, ''));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  // ⑤ ネック合成画像に刺繍質感を追加
+  const handleGenerateNeckEmbroidery = async () => {
+    const neckBase = data.generatedImages?.['top'];   // neck = top
+    if (!neckBase) { alert('先にネック画像を生成してください。'); return; }
+
+    setIsGenerating(true);
+    setGeneratingStatus(prev => ({ ...prev, neck_emb: 'loading' }));
+    try {
+      // topLogos の Canvas 合成（質感追加前のベース）
+      const activeTopLogos = (data.topLogos || []).filter(l => l.generatedLogo && transparentTopLogos[l.id]);
+
+      let compositeBase64 = await imageUrlToBase64(neckBase);
+
+      if (activeTopLogos.length > 0) {
+        compositeBase64 = await new Promise<string>((resolve) => {
+          const neckImg = new Image();
+          neckImg.crossOrigin = 'anonymous';
+          neckImg.onload = async () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = neckImg.width;
+            canvas.height = neckImg.height;
+            const ctx = canvas.getContext('2d')!;
+            ctx.drawImage(neckImg, 0, 0);
+
+            for (const logo of activeTopLogos) {
+              await new Promise<void>((res) => {
+                const li = new Image();
+                li.crossOrigin = 'anonymous';
+                li.onload = () => {
+                  ctx.globalAlpha = typeof logo.logoOpacity === 'number' ? logo.logoOpacity / 100 : 1;
+                  const scale = (logo.logoScale ?? 20) / 100;
+                  const w = canvas.width * scale;
+                  const h = w * (li.height / Math.max(1, li.width));
+                  const cx = ((logo.logoX ?? 50) / 100) * canvas.width;
+                  const cy = ((logo.logoY ?? 50) / 100) * canvas.height;
+                  ctx.drawImage(li, cx - w / 2, cy - h / 2, w, h);
+                  ctx.globalAlpha = 1;
+                  res();
+                };
+                li.onerror = () => res();
+                li.src = transparentTopLogos[logo.id];
+              });
+            }
+            resolve(canvas.toDataURL('image/png').replace(/^data:image\/\w+;base64,/, ''));
+          };
+          neckImg.onerror = () => resolve(compositeBase64);
+          neckImg.src = neckBase.startsWith('data:') ? neckBase : neckBase;
+        });
+      }
+
+      // 加工タイプ・テキスト・カラーをプロンプトに組み込み
+      const colorMap: Record<string, string> = {
+        '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
+        '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green', '#ffa500': 'orange',
+      };
+      const embParts = (data.topLogos || []).map(l => {
+        const typeEn = PROCESSING_TYPES[l.processingType] || 'embroidery';
+        const colorName = colorMap[l.logoColor?.toLowerCase()] || l.logoColor || 'white';
+        const text = l.logoText ? `'${l.logoText}'` : '';
+        return `add ${typeEn} ${text} in ${colorName} thread on the neck area`;
+      });
+      const embPrompt = embParts.length > 0
+        ? `${embParts.join(', ')}, realistic embroidery texture, 3D raised stitching detail, same product color and material otherwise, white studio background`
+        : `add detailed embroidery texture on the neck area, 3D raised stitching, realistic thread detail, same product otherwise, white studio background`;
+
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: embPrompt, imageBase64: compositeBase64, quality: 'low' })
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Neck embroidery API error: ${err}`);
+      }
+      const dataEmb = await res.json();
+      const b64 = dataEmb?.data?.[0]?.b64_json;
+      let embUrl = b64 ? `data:image/png;base64,${b64}` : (dataEmb?.data?.[0]?.url || '');
+      if (!embUrl) throw new Error('Invalid neck embroidery response');
+
+      updateData({ generatedImages: { ...data.generatedImages, neck_embroidered: embUrl } });
+      setGeneratingStatus(prev => ({ ...prev, neck_emb: 'done' }));
+    } catch (e) {
+      console.error(e);
+      alert('ネック刺繍質感生成中にエラーが発生しました。');
+      setGeneratingStatus(prev => ({ ...prev, neck_emb: 'error' }));
     } finally {
       setIsGenerating(false);
     }
@@ -1104,8 +1210,14 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
             デザイン画像生成フロー
           </h3>
           <p className="text-sm text-gray-600">
-            正面ベース画像の生成 → ロゴ合成 → 全アングルの順に生成します。
+            ① 正面生成 → ② ロゴ合成 → ③ ネック生成 → ④ ネックロゴ合成 → ⑤ 刺繍質感追加 → ⑥ 全アングル生成
           </p>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="bg-amber-100 text-amber-800 border border-amber-300 rounded px-2 py-0.5 font-bold">
+              合計コスト目安: 約$0.19（約28円）
+            </span>
+            <span className="text-gray-500">①正面: $0.04 / ③ネック: $0.01 / ⑤刺繍: $0.01 / ⑥全アングル: 無料（Replicate）</span>
+          </div>
         </div>
 
         {/* 1. 正面画像生成 */}
@@ -1174,13 +1286,13 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           </div>
         </div>
 
-        {/* 1.5 上部画像生成 (ピン型のみ) */}
+        {/* 1.5 ネック画像生成 (ピン型のみ) */}
         {(data.generatedImages?.['front_base'] && data.headShape === 'pin') && (
           <div className="bg-sky-50 border border-sky-200 p-4 rounded-lg space-y-2 animate-fade-in fade-in">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div className="flex-1">
-                <h4 className="font-bold text-sky-900 mb-1">1.5. 上部画像生成 <span className="text-xs font-normal text-sky-600 ml-1">(ピン型専用)</span></h4>
-                <p className="text-xs text-sky-700">正面画像をベースに、Image Edit APIで上部ビューを生成します。指示書p.2のネック部に使用します。</p>
+                <h4 className="font-bold text-sky-900 mb-1">③ ネック画像生成 <span className="text-xs font-normal text-sky-600 ml-1">(ピン型専用)</span></h4>
+                <p className="text-xs text-sky-700">正面画像をベースに、Image Edit APIでネック管部のリアビューを生成。指示書p.1+p.2のネック部詳細に使用。</p>
               </div>
               <button
                 onClick={handleGenerateTop}
@@ -1339,8 +1451,36 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
                       }}
                       className="w-full py-1.5 border border-dashed border-sky-300 text-sky-500 rounded text-xs hover:bg-sky-50 font-bold"
                     >
-                      ＋ 上部ロゴを追加
+                      ＋ ネックロゴを追加
                     </button>
+                  )}
+                  {/* ⑤ 刺繍質感追加ボタン */}
+                  {data.generatedImages?.['top'] && (
+                    <div className="mt-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold text-orange-900">⑤ 刺繍質感を追加</p>
+                          <p className="text-xs text-orange-700">ネック合成画像にリアルな刺繍質感を付与。指示書の最終ネック画像に使用。</p>
+                        </div>
+                        <button
+                          onClick={handleGenerateNeckEmbroidery}
+                          disabled={isGenerating || generatingStatus['neck_emb'] === 'loading'}
+                          className="bg-orange-600 hover:bg-orange-700 disabled:bg-orange-400 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded shadow transition-colors flex items-center gap-2 whitespace-nowrap text-sm"
+                        >
+                          {(isGenerating && generatingStatus['neck_emb'] === 'loading') ? (
+                            <><ArrowPathIcon className="w-4 h-4 animate-spin" /> 生成中...</>
+                          ) : (
+                            <><SparklesIcon className="w-4 h-4" /> 刺繍質感を追加</>
+                          )}
+                        </button>
+                      </div>
+                      {data.generatedImages?.['neck_embroidered'] && (
+                        <div className="mt-2">
+                          <p className="text-xs text-orange-600 font-bold mb-1">✓ 刺繍質感追加済み</p>
+                          <img src={data.generatedImages['neck_embroidered']} alt="ネック刺繍" className="w-32 h-32 object-cover rounded border border-orange-300 shadow" />
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1352,8 +1492,8 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           <div className="bg-gray-50 border border-gray-200 p-4 rounded-lg space-y-4 animate-fade-in fade-in">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div className="flex-1">
-                <h4 className="font-bold text-gray-800 mb-1">2. ロゴ生成（オプション）</h4>
-                <p className="text-xs text-gray-600">入力したテキストからロゴを生成し、正面画像に合成します。</p>
+                <h4 className="font-bold text-gray-800 mb-1">② 正面ロゴ合成（オプション）</h4>
+                <p className="text-xs text-gray-600">入力したテキストからロゴを生成し、正面画像に合成します。Zero123++には送信されません（文字反転防止）。</p>
               </div>
             </div>
             
@@ -1591,8 +1731,9 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
         {(isGenerating || (data.generatedImages && data.generatedImages['front_base'])) && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
             {[
-              { id: 'front', label: '正面 (合成プレビュー)' },
-              { id: 'top', label: '上部 (ネック)' },
+              { id: 'front', label: '① 正面 (ロゴプレビュー)' },
+              { id: 'top', label: '③ ネックベース' },
+              { id: 'neck_embroidered', label: '⑤ ネック(刺繍済)' },
               { id: 'oblique_front', label: '斜め正面' },
               { id: 'oblique_back', label: '斜め背面' },
               { id: 'front_3d', label: '正面 (3D抽出)' },
@@ -1600,7 +1741,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
               { id: 'oblique_left', label: '斜め左' },
               { id: 'side', label: '側面' }
             ].map(opt => {
-              const status = generatingStatus[opt.id === 'front' ? 'front' : opt.id === 'top' ? 'top' : 'multiview'];
+              const status = generatingStatus[opt.id === 'front' ? 'front' : opt.id === 'top' ? 'top' : opt.id === 'neck_embroidered' ? 'neck_emb' : 'multiview'];
               const isFrontPreview = opt.id === 'front';
               let imageUrl = isFrontPreview ? data.generatedImages?.['front_base'] : data.generatedImages?.[opt.id];
               
