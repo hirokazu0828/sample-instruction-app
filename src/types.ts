@@ -82,7 +82,6 @@ export type SpecData = {
 
   // Logo fields
   logos: LogoData[];
-  topLogos: LogoData[];
 };
 
 export const initialSpecData: SpecData = {
@@ -136,6 +135,5 @@ export const initialSpecData: SpecData = {
     { id: '3', technique: '', threadType: '', threadNumber: '', size: '', placement: '' },
   ],
   logos: [],
-  topLogos: [],
 };
 

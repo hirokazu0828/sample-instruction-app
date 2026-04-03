@@ -173,9 +173,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingStatus, setGeneratingStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({});
   const [logoGeneratingStatus, setLogoGeneratingStatus] = useState<Record<string, 'loading' | 'done' | 'error'>>({});
-  const [topLogoGeneratingStatus, setTopLogoGeneratingStatus] = useState<Record<string, 'loading' | 'done' | 'error'>>({});
   const [transparentLogos, setTransparentLogos] = useState<Record<string, string>>({});
-  const [transparentTopLogos, setTransparentTopLogos] = useState<Record<string, string>>({});
 
   const shapeMap: Record<string, string> = {
     pin: 'ピン型',
@@ -463,23 +461,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     return () => { isCancelled = true; };
   }, [data.logos]);
 
-  // topLogos 用投明化
-  useEffect(() => {
-    let isCancelled = false;
-    const loadTransparentTopLogos = async () => {
-      const newTransparent: Record<string, string> = { ...transparentTopLogos };
-      let changed = false;
-      for (const logo of data.topLogos || []) {
-        if (logo.generatedLogo && !newTransparent[logo.id]) {
-          newTransparent[logo.id] = await removeBlackBackground(logo.generatedLogo);
-          changed = true;
-        }
-      }
-      if (!isCancelled && changed) setTransparentTopLogos(newTransparent);
-    };
-    loadTransparentTopLogos();
-    return () => { isCancelled = true; };
-  }, [data.topLogos]);
+
 
   // ロゴ情報をプロンプトに追加するための共通ヘルパー
   const buildLogoPromptAdditions = () => {
@@ -557,168 +539,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
   };
 
 
-  const handleGenerateTop = async () => {
-    const frontBase = data.generatedImages?.['front_base'];
-    if (!frontBase) { alert('まず正面画像を生成してください。'); return; }
-    
-    setIsGenerating(true);
-    setGeneratingStatus(prev => ({ ...prev, top: 'loading' }));
-    try {
-      const neckPrompt = `same exact product, front view of the neck base area, showing the flat front panel of the neck tube clearly, neck base panel facing camera directly, same color and material as the original, white studio background, close-up product shot, similar to a blade putter cover showing the neck front panel`;
 
-      // front_baseはdata:URLまたはhttps://URLの両方がありうる。
-      // どちらでもbase64文字列に変換してから送信する。
-      let imgBase64 = '';
-      if (frontBase.startsWith('data:')) {
-        imgBase64 = frontBase.replace(/^data:image\/\w+;base64,/, '');
-      } else {
-        // https://なURLの場合→ブラウザ側でfetchしてbase64化
-        const fetched = await fetch(frontBase);
-        const blob = await fetched.blob();
-        imgBase64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const result = reader.result as string;
-            resolve(result.replace(/^data:image\/\w+;base64,/, ''));
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-      }
-
-      const res = await fetch('/api/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: neckPrompt,
-          imageBase64: imgBase64,
-          quality: 'low'
-        })
-      });
-      if (!res.ok) throw new Error('Failed to generate neck image');
-      const dataTop = await res.json();
-      const b64 = dataTop?.data?.[0]?.b64_json;
-      let topUrl = '';
-      if (b64) topUrl = `data:image/png;base64,${b64}`;
-      else if (dataTop?.data?.[0]?.url) topUrl = dataTop.data[0].url;
-      if (!topUrl) throw new Error('Invalid neck image format');
-
-      const newImages = { ...data.generatedImages, top: topUrl };
-      updateData({ generatedImages: newImages });
-      setGeneratingStatus(prev => ({ ...prev, top: 'done' }));
-    } catch (e) {
-      console.error(e);
-      alert('ネック画像生成中にエラーが発生しました。');
-      setGeneratingStatus(prev => ({ ...prev, top: 'error' }));
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  // URL または dataURL を raw base64 文字列に変換するヘルパー
-  const imageUrlToBase64 = async (url: string): Promise<string> => {
-    if (url.startsWith('data:')) {
-      return url.replace(/^data:image\/\w+;base64,/, '');
-    }
-    const fetched = await fetch(url);
-    const blob = await fetched.blob();
-    return new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve((reader.result as string).replace(/^data:image\/\w+;base64,/, ''));
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  };
-
-  // ⑤ ネック合成画像に刺繍質感を追加
-  const handleGenerateNeckEmbroidery = async () => {
-    const neckBase = data.generatedImages?.['top'];   // neck = top
-    if (!neckBase) { alert('先にネック画像を生成してください。'); return; }
-
-    setIsGenerating(true);
-    setGeneratingStatus(prev => ({ ...prev, neck_emb: 'loading' }));
-    try {
-      // topLogos の Canvas 合成（質感追加前のベース）
-      const activeTopLogos = (data.topLogos || []).filter(l => l.generatedLogo && transparentTopLogos[l.id]);
-
-      let compositeBase64 = await imageUrlToBase64(neckBase);
-
-      if (activeTopLogos.length > 0) {
-        compositeBase64 = await new Promise<string>((resolve) => {
-          const neckImg = new Image();
-          neckImg.crossOrigin = 'anonymous';
-          neckImg.onload = async () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = neckImg.width;
-            canvas.height = neckImg.height;
-            const ctx = canvas.getContext('2d')!;
-            ctx.drawImage(neckImg, 0, 0);
-
-            for (const logo of activeTopLogos) {
-              await new Promise<void>((res) => {
-                const li = new Image();
-                li.crossOrigin = 'anonymous';
-                li.onload = () => {
-                  ctx.globalAlpha = typeof logo.logoOpacity === 'number' ? logo.logoOpacity / 100 : 1;
-                  const scale = (logo.logoScale ?? 20) / 100;
-                  const w = canvas.width * scale;
-                  const h = w * (li.height / Math.max(1, li.width));
-                  const cx = ((logo.logoX ?? 50) / 100) * canvas.width;
-                  const cy = ((logo.logoY ?? 50) / 100) * canvas.height;
-                  ctx.drawImage(li, cx - w / 2, cy - h / 2, w, h);
-                  ctx.globalAlpha = 1;
-                  res();
-                };
-                li.onerror = () => res();
-                li.src = transparentTopLogos[logo.id];
-              });
-            }
-            resolve(canvas.toDataURL('image/png').replace(/^data:image\/\w+;base64,/, ''));
-          };
-          neckImg.onerror = () => resolve(compositeBase64);
-          neckImg.src = neckBase.startsWith('data:') ? neckBase : neckBase;
-        });
-      }
-
-      // 加工タイプ・テキスト・カラーをプロンプトに組み込み（colorMapは各ループ内で定義）
-      const embParts = (data.topLogos || []).map(l => {
-        const typeEn = PROCESSING_TYPES[l.processingType] || 'embroidery';
-        const colorMap2: Record<string, string> = {
-          '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
-          '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green', '#ffa500': 'orange',
-        };
-        const colorName = colorMap2[l.logoColor?.toLowerCase()] || l.logoColor || 'white';
-        const text = l.logoText || '';
-        return `same product, the neck front panel now has ${typeEn} embroidery '${text}' in ${colorName}, realistic thread texture, centered on neck panel, same product color and shape otherwise`;
-      });
-      const embPrompt = embParts.length > 0
-        ? embParts[0] + (embParts.length > 1 ? '. Also: ' + embParts.slice(1).join('. Also: ') : '') + ', white studio background'
-        : `same product, the neck front panel now has detailed embroidery texture, realistic 3D raised stitching, centered on neck panel, same product color and shape otherwise, white studio background`;
-
-      const res = await fetch('/api/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: embPrompt, imageBase64: compositeBase64, quality: 'low' })
-      });
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`Neck embroidery API error: ${err}`);
-      }
-      const dataEmb = await res.json();
-      const b64 = dataEmb?.data?.[0]?.b64_json;
-      let embUrl = b64 ? `data:image/png;base64,${b64}` : (dataEmb?.data?.[0]?.url || '');
-      if (!embUrl) throw new Error('Invalid neck embroidery response');
-
-      updateData({ generatedImages: { ...data.generatedImages, neck_embroidered: embUrl } });
-      setGeneratingStatus(prev => ({ ...prev, neck_emb: 'done' }));
-    } catch (e) {
-      console.error(e);
-      alert('ネック刺繍質感生成中にエラーが発生しました。');
-      setGeneratingStatus(prev => ({ ...prev, neck_emb: 'error' }));
-    } finally {
-      setIsGenerating(false);
-    }
-  };
 
   const handleGenerateLogo = async (logoId: string) => {
     const targetLogo = (data.logos || []).find(l => l.id === logoId);
@@ -812,43 +633,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
     }
   };
 
-  // 上部画像用ロゴ生成
-  const handleGenerateTopLogo = async (logoId: string) => {
-    const targetLogo = (data.topLogos || []).find(l => l.id === logoId);
-    if (!targetLogo || !targetLogo.logoText) return;
-    
-    setTopLogoGeneratingStatus(prev => ({ ...prev, [logoId]: 'loading' }));
-    try {
-      let logoUrl = '';
-      if (targetLogo.logoType === 'text') {
-        const fontType = targetLogo.textFont || 'gothic';
-        const direction = targetLogo.textDirection || 'horizontal';
-        logoUrl = await createCanvasTextLogo(targetLogo.logoText, fontType, direction);
-      } else {
-        const typePrompt = PROCESSING_TYPES[targetLogo.processingType] || 'logo';
-        const prompt = `minimalist brand logo mark for '${targetLogo.logoText}', white icon symbol on pure black background, simple geometric shape, no letters, no text, street style golf brand icon, clean vector style, ${typePrompt}`;
-        const res = await fetch('/api/generate-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, quality: 'low' })
-        });
-        if (!res.ok) throw new Error('Failed to generate top logo');
-        const d = await res.json();
-        const b64 = d?.data?.[0]?.b64_json;
-        if (b64) logoUrl = `data:image/png;base64,${b64}`;
-        else if (d?.data?.[0]?.url) logoUrl = d.data[0].url;
-        if (!logoUrl) throw new Error('Invalid logo format');
-      }
-      
-      const updated = (data.topLogos || []).map(l => l.id === logoId ? { ...l, generatedLogo: logoUrl } : l);
-      updateData({ topLogos: updated });
-      setTopLogoGeneratingStatus(prev => ({ ...prev, [logoId]: 'done' }));
-    } catch (e) {
-      console.error(e);
-      alert('上部ロゴ生成中にエラーが発生しました。');
-      setTopLogoGeneratingStatus(prev => ({ ...prev, [logoId]: 'error' }));
-    }
-  };
+
 
   return (
     <div className="space-y-8 animate-fade-in fade-in pb-12">
@@ -1176,13 +961,13 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
             デザイン画像生成フロー
           </h3>
           <p className="text-sm text-gray-600">
-            ① 正面生成 → ② ロゴ合成 → ③ ネック生成 → ④ ネックロゴ合成 → ⑤ 刺繍質感追加 → ⑥ 全アングル生成
+            ① 正面生成 → ② ロゴ合成 → ③ 全アングル生成
           </p>
           <div className="flex items-center gap-2 text-xs">
             <span className="bg-amber-100 text-amber-800 border border-amber-300 rounded px-2 py-0.5 font-bold">
-              合計コスト目安: 約$0.19（約28円）
+              合計コスト目安: 約$0.04（約6円）
             </span>
-            <span className="text-gray-500">①正面: $0.04 / ③ネック: $0.01 / ⑤刺繍: $0.01 / ⑥全アングル: 無料（Replicate）</span>
+            <span className="text-gray-500">①正面: $0.04 / 全アングル: 無料（Replicate）</span>
           </div>
         </div>
 
@@ -1252,207 +1037,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           </div>
         </div>
 
-        {/* 1.5 ネック画像生成 (ピン型のみ) */}
-        {(data.generatedImages?.['front_base'] && data.headShape === 'pin') && (
-          <div className="bg-sky-50 border border-sky-200 p-4 rounded-lg space-y-2 animate-fade-in fade-in">
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="flex-1">
-                <h4 className="font-bold text-sky-900 mb-1">③ ネック画像生成 <span className="text-xs font-normal text-sky-600 ml-1">(ピン型専用)</span></h4>
-                <p className="text-xs text-sky-700">正面画像をベースに、Image Edit APIでネック管部のリアビューを生成。指示書p.1+p.2のネック部詳細に使用。</p>
-              </div>
-              <button
-                onClick={handleGenerateTop}
-                disabled={isGenerating || generatingStatus['top'] === 'loading'}
-                className="bg-sky-600 hover:bg-sky-700 disabled:bg-sky-400 disabled:cursor-not-allowed text-white font-medium py-2 px-5 rounded shadow transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
-              >
-                {(isGenerating && generatingStatus['top'] === 'loading') ? (
-                  <><ArrowPathIcon className="w-4 h-4 animate-spin" /> 生成中...</>
-                ) : (
-                  <><SparklesIcon className="w-4 h-4" /> 上部を生成</>
-                )}
-              </button>
-            </div>
-            {data.generatedImages?.['top'] && (
-              <div className="pt-2 space-y-3">
-                <p className="text-xs text-sky-600 font-bold">上部プレビュー（ロゴをドラッグして配置）</p>
-                {/* 上部画像 + ロゴオーバーレイ */}
-                <div className="relative w-48 h-48 border border-sky-300 rounded shadow overflow-hidden bg-white">
-                  <img src={data.generatedImages['top']} alt="上部" className="w-full h-full object-cover pointer-events-none" />
-                  {(data.topLogos || []).map(logo => {
-                    const tSrc = transparentTopLogos[logo.id];
-                    if (!tSrc) return null;
-                    return (
-                      <DraggableLogo
-                        key={logo.id}
-                        logoSrc={tSrc}
-                        logoScale={logo.logoScale ?? 20}
-                        logoX={logo.logoX ?? 50}
-                        logoY={logo.logoY ?? 50}
-                        logoColor={logo.logoColor}
-                        logoOpacity={logo.logoOpacity}
-                        isTopFixed={!!logo.isTopFixed}
-                        onUpdate={(x: number, y: number) => {
-                          const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, logoX: x, logoY: y } : l);
-                          updateData({ topLogos: updated });
-                        }}
-                      />
-                    );
-                  })}
-                </div>
 
-                {/* 上部ロゴパネル */}
-                <div className="flex flex-col gap-3">
-                  {(data.topLogos || []).map((logo, idx) => (
-                    <div key={logo.id} className="p-3 bg-white border border-sky-100 rounded-lg shadow-sm relative">
-                      <button
-                        onClick={() => {
-                          const updated = (data.topLogos || []).filter(l => l.id !== logo.id);
-                          updateData({ topLogos: updated });
-                        }}
-                        className="absolute top-2 right-2 text-gray-400 hover:text-red-500 text-sm"
-                      >✕</button>
-                      <p className="text-xs font-bold text-sky-700 mb-2">上部ロゴ {idx + 1}</p>
-                      <div className="grid grid-cols-1 gap-2">
-                        <div className="flex gap-2 items-center">
-                          <select
-                            className="border border-gray-200 rounded p-1.5 text-xs flex-1"
-                            value={logo.processingType}
-                            onChange={(e) => {
-                              const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, processingType: e.target.value } : l);
-                              updateData({ topLogos: updated });
-                            }}
-                          >
-                            {Object.keys(PROCESSING_TYPES).map(type => (
-                              <option key={type} value={type}>{type}</option>
-                            ))}
-                          </select>
-                          <div className="flex gap-1.5">
-                            <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
-                              <input type="radio" name={`tlogoType-${logo.id}`} checked={logo.logoType !== 'text'} onChange={() => {
-                                const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, logoType: 'icon' as const } : l);
-                                updateData({ topLogos: updated });
-                              }} className="text-sky-600" />AI
-                            </label>
-                            <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
-                              <input type="radio" name={`tlogoType-${logo.id}`} checked={logo.logoType === 'text'} onChange={() => {
-                                const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, logoType: 'text' as const } : l);
-                                updateData({ topLogos: updated });
-                              }} className="text-sky-600" />文字
-                            </label>
-                          </div>
-                        </div>
-                        {logo.logoType === 'text' && (
-                          <div className="flex gap-2">
-                            <select className="border border-gray-200 rounded p-1 text-xs" value={logo.textFont || 'gothic'}
-                              onChange={(e) => { const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, textFont: e.target.value as any } : l); updateData({ topLogos: updated }); }}>
-                              <option value="gothic">ゴシック</option>
-                              <option value="mincho">明朝</option>
-                              <option value="english">英字</option>
-                            </select>
-                            <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
-                              <input type="radio" name={`tdir-${logo.id}`} checked={logo.textDirection !== 'vertical'} onChange={() => {
-                                const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, textDirection: 'horizontal' as const } : l);
-                                updateData({ topLogos: updated });
-                              }} className="text-sky-600" />横
-                            </label>
-                            <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer">
-                              <input type="radio" name={`tdir-${logo.id}`} checked={logo.textDirection === 'vertical'} onChange={() => {
-                                const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, textDirection: 'vertical' as const } : l);
-                                updateData({ topLogos: updated });
-                              }} className="text-sky-600" />縦
-                            </label>
-                          </div>
-                        )}
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            className="flex-1 border border-gray-200 rounded p-1.5 text-xs"
-                            placeholder="テキスト / キーワード"
-                            value={logo.logoText || ''}
-                            onChange={(e) => {
-                              const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, logoText: e.target.value } : l);
-                              updateData({ topLogos: updated });
-                            }}
-                          />
-                          <button
-                            onClick={() => handleGenerateTopLogo(logo.id)}
-                            disabled={topLogoGeneratingStatus[logo.id] === 'loading' || !logo.logoText}
-                            className="bg-sky-700 hover:bg-sky-800 disabled:bg-gray-300 text-white px-2 rounded text-xs whitespace-nowrap"
-                          >
-                            {topLogoGeneratingStatus[logo.id] === 'loading' ? '生成中...' : logo.generatedLogo ? '再生成' : '生成'}
-                          </button>
-                        </div>
-                        {logo.generatedLogo && (
-                          <div className="flex gap-3 items-center">
-                            <div className="w-10 h-10 bg-black rounded border border-gray-200 flex items-center justify-center shrink-0">
-                              <img src={logo.generatedLogo} className="max-w-full max-h-full" alt="" />
-                            </div>
-                            <div className="flex-1 space-y-1">
-                              <div className="flex gap-2 items-center">
-                                <label className="text-xs text-gray-500 shrink-0">色</label>
-                                <input type="color" value={logo.logoColor} className="w-8 h-5 border border-gray-200 rounded cursor-pointer"
-                                  onChange={(e) => { const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, logoColor: e.target.value } : l); updateData({ topLogos: updated }); }} />
-                                <label className="text-xs text-gray-500 shrink-0">サイズ {logo.logoScale}%</label>
-                                <input type="range" min="5" max="80" value={logo.logoScale} className="flex-1 h-1.5"
-                                  onChange={(e) => { const updated = (data.topLogos || []).map(l => l.id === logo.id ? { ...l, logoScale: parseInt(e.target.value) } : l); updateData({ topLogos: updated }); }} />
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {(!data.topLogos || data.topLogos.length < 3) && (
-                    <button
-                      onClick={() => {
-                        const newLogo: any = {
-                          id: `top_${Date.now()}`,
-                          processingType: Object.keys(PROCESSING_TYPES)[0],
-                          logoText: '',
-                          logoType: 'text',
-                          logoX: 50, logoY: 50, logoScale: 20,
-                          logoColor: '#ffffff', logoOpacity: 100
-                        };
-                        updateData({ topLogos: [...(data.topLogos || []), newLogo] });
-                      }}
-                      className="w-full py-1.5 border border-dashed border-sky-300 text-sky-500 rounded text-xs hover:bg-sky-50 font-bold"
-                    >
-                      ＋ ネックロゴを追加
-                    </button>
-                  )}
-                  {/* ⑤ 刺繍質感追加ボタン */}
-                  {data.generatedImages?.['top'] && (
-                    <div className="mt-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-bold text-orange-900">⑤ 刺繍質感を追加</p>
-                          <p className="text-xs text-orange-700">ネック合成画像にリアルな刺繍質感を付与。指示書の最終ネック画像に使用。</p>
-                        </div>
-                        <button
-                          onClick={handleGenerateNeckEmbroidery}
-                          disabled={isGenerating || generatingStatus['neck_emb'] === 'loading'}
-                          className="bg-orange-600 hover:bg-orange-700 disabled:bg-orange-400 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded shadow transition-colors flex items-center gap-2 whitespace-nowrap text-sm"
-                        >
-                          {(isGenerating && generatingStatus['neck_emb'] === 'loading') ? (
-                            <><ArrowPathIcon className="w-4 h-4 animate-spin" /> 生成中...</>
-                          ) : (
-                            <><SparklesIcon className="w-4 h-4" /> 刺繍質感を追加</>
-                          )}
-                        </button>
-                      </div>
-                      {data.generatedImages?.['neck_embroidered'] && (
-                        <div className="mt-2">
-                          <p className="text-xs text-orange-600 font-bold mb-1">✓ 刺繍質感追加済み</p>
-                          <img src={data.generatedImages['neck_embroidered']} alt="ネック刺繍" className="w-32 h-32 object-cover rounded border border-orange-300 shadow" />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
         {/* 2. ロゴ生成 */}
         {(data.generatedImages && data.generatedImages['front_base']) && (
           <div className="bg-gray-50 border border-gray-200 p-4 rounded-lg space-y-4 animate-fade-in fade-in">
@@ -1698,8 +1283,6 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
             {[
               { id: 'front', label: '① 正面 (ロゴプレビュー)' },
-              { id: 'top', label: '③ ネックベース' },
-              { id: 'neck_embroidered', label: '⑤ ネック(刺繍済)' },
               { id: 'oblique_front', label: '斜め正面' },
               { id: 'oblique_back', label: '斜め背面' },
               { id: 'front_3d', label: '正面 (3D抽出)' },
@@ -1707,7 +1290,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
               { id: 'oblique_left', label: '斜め左' },
               { id: 'side', label: '側面' }
             ].map(opt => {
-              const status = generatingStatus[opt.id === 'front' ? 'front' : opt.id === 'top' ? 'top' : opt.id === 'neck_embroidered' ? 'neck_emb' : 'multiview'];
+              const status = generatingStatus[opt.id === 'front' ? 'front' : 'multiview'];
               const isFrontPreview = opt.id === 'front';
               let imageUrl = isFrontPreview ? data.generatedImages?.['front_base'] : data.generatedImages?.[opt.id];
               

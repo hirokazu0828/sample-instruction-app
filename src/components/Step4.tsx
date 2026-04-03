@@ -204,26 +204,17 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
             </table>
           </div>
           {/* P1: 正面と斜め正面の2枚を表示 */}
-          <div className="w-[240px] border-2 border-[#16a34a] p-2 bg-[#f0fdf4] print:border-[#333] print:bg-white flex flex-col items-center flex-shrink-0">
+          <div className="w-[300px] border-2 border-[#16a34a] p-2 bg-[#f0fdf4] print:border-[#333] print:bg-white flex flex-col items-center flex-shrink-0">
             <span className="text-[#16a34a] font-bold text-sm mb-2 print:text-[#333]">■ デザイン完成イメージ (AI)</span>
             <div className="flex flex-col gap-4 w-full h-full">
               {/* 正面 */}
-              <div className="flex-1 flex flex-col items-center bg-white p-1 border rounded shadow-sm print:shadow-none print:border-gray-300">
+              <div className="flex-1 flex flex-col items-center bg-white p-2 border rounded shadow-sm print:shadow-none print:border-gray-300">
                 {data.generatedImages?.front ? (
                   <img src={data.generatedImages.front} alt="正面" className="w-full h-auto object-contain flex-1 min-h-0" />
                 ) : (
-                  <div className="w-full flex-1 min-h-[160px] bg-gray-100 flex items-center justify-center text-gray-400 text-xs text-center p-2 rounded">画像未生成<br/>(正面)</div>
+                  <div className="w-full flex-1 min-h-[240px] bg-gray-100 flex items-center justify-center text-gray-400 text-xs text-center p-2 rounded">画像未生成<br/>(正面)</div>
                 )}
-                <span className="text-[10px] font-bold mt-1 text-gray-700">正面 (高画質)</span>
-              </div>
-              {/* ネック刺繍済み */}
-              <div className="flex-1 flex flex-col items-center bg-white p-1 border rounded shadow-sm print:shadow-none print:border-gray-300">
-                {(data.generatedImages?.neck_embroidered || data.generatedImages?.top) ? (
-                  <img src={data.generatedImages.neck_embroidered || data.generatedImages.top} alt="ネック" className="w-full h-auto object-contain flex-1 min-h-0" />
-                ) : (
-                  <div className="w-full flex-1 min-h-[160px] bg-gray-100 flex items-center justify-center text-gray-400 text-xs text-center p-2 rounded">画像未生成<br/>(ネック刺繍)</div>
-                )}
-                <span className="text-[10px] font-bold mt-1 text-gray-700">ネック (刺繍済)</span>
+                <span className="text-sm font-bold mt-2 text-gray-700">正面 (高画質)</span>
               </div>
             </div>
           </div>
@@ -409,16 +400,8 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
 
         {/* ネック刺繍詳細セクション + 6アングル */}
         <div className="mt-6">
-          <h4 className="font-bold text-sm mb-3 border-b border-gray-300 pb-1">ネック部詳細（刺繍仕上げ）・全アングルイメージ</h4>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {/* ネック全体 */}
-            {(data.generatedImages?.neck_embroidered || data.generatedImages?.top) && (
-              <div className="flex flex-col items-center">
-                <img src={data.generatedImages.neck_embroidered || data.generatedImages.top!} alt="ネック" className="w-full aspect-square object-cover rounded border border-orange-300 shadow-sm" />
-                <span className="text-[10px] mt-1 font-bold text-orange-700">ネック (刺繍済)</span>
-              </div>
-            )}
-            {/* 6アングル */}
+          <h4 className="font-bold text-sm mb-3 border-b border-gray-300 pb-1">全アングル展開イメージ</h4>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             {['oblique_front','oblique_back','front_3d','oblique_right','oblique_left','side'].map(key => (
               data.generatedImages?.[key] ? (
                 <div key={key} className="flex flex-col items-center">
@@ -429,7 +412,11 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
                     oblique_left: '斜め左', side: '側面'
                   }[key]}</span>
                 </div>
-              ) : null
+              ) : (
+                <div key={key} className="flex flex-col items-center justify-center bg-gray-100 aspect-square rounded border border-gray-200 border-dashed">
+                  <span className="text-[10px] text-gray-400">未生成</span>
+                </div>
+              )
             ))}
           </div>
         </div>
@@ -449,17 +436,17 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
               <input type="checkbox" checked={showPage3Images} onChange={e => setShowPage3Images(e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-gray-300" />
               <span className="text-sm font-bold text-gray-700">参考画像を表示する</span>
             </label>
-            {(data.logos?.length || data.topLogos?.length) ? (
+            {data.logos?.length ? (
               <button
                 onClick={() => {
-                  const allLogos = [...(data.logos || []), ...(data.topLogos || [])];
+                  const allLogos = data.logos || [];
                   const newEmbs = allLogos.map((l, i) => ({
                     id: `auto_${i}_${Date.now()}`,
                     technique: l.processingType || '',
                     threadType: l.logoColor?.toLowerCase().includes('gold') || l.logoColor === '#ffd700' ? 'メタリック糸' : '標準刺繍糸',
                     threadNumber: l.logoColor || '',
                     size: '',
-                    placement: l.isTopFixed ? 'ネック中央' : '前面パネル',
+                    placement: l.isTopFixed ? '上部中央' : '前面パネル',
                   }));
                   updateEmbroideries(newEmbs);
                   setShowToast(true);
@@ -551,10 +538,10 @@ export default function Step4({ data, updateData, onReset, onBack }: Props) {
             <div className="w-[240px] border-2 border-[#16a34a] p-2 bg-[#f0fdf4] print:border-[#333] print:bg-white flex flex-col items-center flex-shrink-0 print:hidden md:flex">
               <span className="text-[#16a34a] font-bold text-sm mb-2 print:text-[#333]">■ デザイン完成イメージ</span>
               <div className="flex flex-col gap-2 w-full">
-                {['front', 'back', 'side', 'neck'].map(key => {
+                {['front', 'side'].map(key => {
                   const url = data.generatedImages![key];
                   if (!url) return null;
-                  const labelMap: Record<string, string> = { front: '正面', back: '背面', side: '側面', neck: 'ネック部' };
+                  const labelMap: Record<string, string> = { front: '正面', side: '側面' };
                   return (
                     <div key={key} className="flex flex-col items-center bg-white p-1 border rounded shadow-sm">
                       <img src={url} alt={labelMap[key]} className="w-full h-auto object-contain" />
