@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { SparklesIcon, ExclamationTriangleIcon, ArrowPathIcon, PhotoIcon } from '@heroicons/react/24/outline';
 import type { SpecData } from '../types';
 import specJson from '../data/putter_cover_parametric_v3.json';
@@ -174,6 +174,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
   const [generatingStatus, setGeneratingStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({});
   const [logoGeneratingStatus, setLogoGeneratingStatus] = useState<Record<string, 'loading' | 'done' | 'error'>>({});
   const [transparentLogos, setTransparentLogos] = useState<Record<string, string>>({});
+  const lastProcessedUrls = useRef<Record<string, string>>({});
 
   const shapeMap: Record<string, string> = {
     pin: 'ピン型',
@@ -470,9 +471,15 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       const newTransparent: Record<string, string> = { ...transparentLogos };
       let changed = false;
       for (const logo of data.logos || []) {
-        if (logo.generatedLogo && !newTransparent[logo.id]) {
-           newTransparent[logo.id] = await removeBlackBackground(logo.generatedLogo);
-           changed = true;
+        // もし生成された画像があり、かつ最後に処理したURLと異なる（＝再生成や新規生成時）場合に処理を実行
+        if (logo.generatedLogo && lastProcessedUrls.current[logo.id] !== logo.generatedLogo) {
+          try {
+            newTransparent[logo.id] = await removeBlackBackground(logo.generatedLogo);
+            lastProcessedUrls.current[logo.id] = logo.generatedLogo; // 現在のURLを記録して重複処理を防ぐ
+            changed = true;
+          } catch (err) {
+            console.error('Logo transparency processing failed:', err);
+          }
         }
       }
       if (!isCancelled && changed) setTransparentLogos(newTransparent);
