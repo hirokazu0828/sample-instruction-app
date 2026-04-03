@@ -474,16 +474,35 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       
       let logoPromptAdditions = '';
       if (data.logos && data.logos.length > 0) {
-         const types = data.logos.map(l => {
+         const logoParts = data.logos.map(l => {
            let typeStr = PROCESSING_TYPES[l.processingType] || 'logo';
-           if (l.logoType === 'text') {
-              typeStr += l.textDirection === 'vertical' ? ' vertical text arrangement, top to bottom' : ' horizontal text';
+           let colorName = '';
+           if (l.logoColor && l.logoColor !== '#ffffff') {
+             // Map common hex colors to names for better prompt clarity
+             const colorMap: Record<string, string> = {
+               '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
+               '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green',
+               '#ffa500': 'orange', '#800080': 'purple',
+             };
+             colorName = colorMap[l.logoColor.toLowerCase()] || l.logoColor;
            }
-           let placementStr = l.isTopFixed ? 'at top' : 'centered on front panel';
-           let colorStr = (l.logoColor && l.logoColor !== '#ffffff') ? `in color ${l.logoColor}` : '';
-           return `${typeStr} ${colorStr} ${placementStr}`.trim();
+           let textPart = l.logoText ? `'${l.logoText}'` : '';
+           let dirStr = '';
+           if (l.logoType === 'text') {
+             dirStr = l.textDirection === 'vertical'
+               ? 'vertical text arrangement, top to bottom'
+               : 'horizontal text';
+           }
+           let placementStr = l.isTopFixed ? 'at top center' : 'centered on front panel';
+           return [
+             colorName,
+             typeStr,
+             dirStr,
+             textPart,
+             placementStr
+           ].filter(Boolean).join(' ');
          });
-         logoPromptAdditions = ` with ${types.join(' and ')}`;
+         logoPromptAdditions = ` with ${logoParts.join(' and ')}`;
       }
       
       const basePrompt = `A highly detailed professional product photograph of a golf putter cover. Shape: ${data.headShape || 'standard'}, Color: ${pColor}, Fabric material: ${pFabric}, Piping: ${pPiping}, Hardware Finish: ${pHardware}.${logoPromptAdditions} Studio lighting, clean white background, high quality, 8k resolution.`;
@@ -520,6 +539,71 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       console.error(e);
       alert('正面画像生成中にエラーが発生しました。');
       setGeneratingStatus({ front: 'error' });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const buildLogoPromptAdditions = () => {
+    if (!data.logos || data.logos.length === 0) return '';
+    const colorMap: Record<string, string> = {
+      '#ffd700': 'gold', '#c0c0c0': 'silver', '#000000': 'black',
+      '#ff0000': 'red', '#0000ff': 'blue', '#008000': 'green',
+      '#ffa500': 'orange', '#800080': 'purple',
+    };
+    const parts = data.logos.map(l => {
+      const typeStr = PROCESSING_TYPES[l.processingType] || 'logo';
+      const colorName = l.logoColor && l.logoColor !== '#ffffff'
+        ? (colorMap[l.logoColor.toLowerCase()] || l.logoColor)
+        : '';
+      const textPart = l.logoText ? `'${l.logoText}'` : '';
+      const dirStr = l.logoType === 'text'
+        ? (l.textDirection === 'vertical' ? 'vertical text arrangement, top to bottom' : 'horizontal text')
+        : '';
+      const placementStr = l.isTopFixed ? 'at top center' : 'centered on front panel';
+      return [colorName, typeStr, dirStr, textPart, placementStr].filter(Boolean).join(' ');
+    });
+    return ` with ${parts.join(' and ')}`;
+  };
+
+  const handleGenerateTop = async () => {
+    const frontBase = data.generatedImages?.['front_base'];
+    if (!frontBase) { alert('まず正面画像を生成してください。'); return; }
+    
+    setIsGenerating(true);
+    setGeneratingStatus(prev => ({ ...prev, top: 'loading' }));
+    try {
+      const pColor = getLabel(specJson.parameters.body_color, data.bodyColor || '') || 'neutral';
+      const pFabric = getLabel(specJson.parameters.body_fabric, data.bodyFabric || '') || 'standard';
+      const logoAdditions = buildLogoPromptAdditions();
+
+      const topPrompt = `same exact product, putter head cover in ${pColor} ${pFabric}, view from directly above, top-down bird's eye view, showing the neck opening and top surface of the putter cover, same color and material${logoAdditions}, white studio background, high quality`;
+
+      const imgBase64 = frontBase.replace(/^data:image\/\w+;base64,/, '');
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: topPrompt,
+          imageBase64: imgBase64,
+          quality: data.imageQuality || 'medium'
+        })
+      });
+      if (!res.ok) throw new Error('Failed to generate top image');
+      const dataTop = await res.json();
+      const b64 = dataTop?.data?.[0]?.b64_json;
+      let topUrl = '';
+      if (b64) topUrl = `data:image/png;base64,${b64}`;
+      else if (dataTop?.data?.[0]?.url) topUrl = dataTop.data[0].url;
+      if (!topUrl) throw new Error('Invalid top image format');
+
+      const newImages = { ...data.generatedImages, top: topUrl };
+      updateData({ generatedImages: newImages });
+      setGeneratingStatus(prev => ({ ...prev, top: 'done' }));
+    } catch (e) {
+      console.error(e);
+      alert('上部画像生成中にエラーが発生しました。');
+      setGeneratingStatus(prev => ({ ...prev, top: 'error' }));
     } finally {
       setIsGenerating(false);
     }
@@ -1079,6 +1163,34 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           </div>
         </div>
 
+        {/* 1.5 上部画像生成 (ピン型のみ) */}
+        {(data.generatedImages?.['front_base'] && data.headShape === 'pin') && (
+          <div className="bg-sky-50 border border-sky-200 p-4 rounded-lg space-y-2 animate-fade-in fade-in">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex-1">
+                <h4 className="font-bold text-sky-900 mb-1">1.5. 上部画像生成 <span className="text-xs font-normal text-sky-600 ml-1">(ピン型専用)</span></h4>
+                <p className="text-xs text-sky-700">正面画像をベースに、Image Edit APIで上部ビューを生成します。指示書p.2のネック部に使用します。</p>
+              </div>
+              <button
+                onClick={handleGenerateTop}
+                disabled={isGenerating || generatingStatus['top'] === 'loading'}
+                className="bg-sky-600 hover:bg-sky-700 disabled:bg-sky-400 disabled:cursor-not-allowed text-white font-medium py-2 px-5 rounded shadow transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                {(isGenerating && generatingStatus['top'] === 'loading') ? (
+                  <><ArrowPathIcon className="w-4 h-4 animate-spin" /> 生成中...</>
+                ) : (
+                  <><SparklesIcon className="w-4 h-4" /> 上部を生成</>
+                )}
+              </button>
+            </div>
+            {data.generatedImages?.['top'] && (
+              <div className="pt-2">
+                <p className="text-xs text-sky-600 font-bold mb-1">生成済み上部画像</p>
+                <img src={data.generatedImages['top']} alt="上部" className="w-40 h-40 object-cover rounded border border-sky-300 shadow" />
+              </div>
+            )}
+          </div>
+        )}
         {/* 2. ロゴ生成 */}
         {(data.generatedImages && data.generatedImages['front_base']) && (
           <div className="bg-gray-50 border border-gray-200 p-4 rounded-lg space-y-4 animate-fade-in fade-in">
@@ -1330,6 +1442,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
             {[
               { id: 'front', label: '正面 (合成プレビュー)' },
+              { id: 'top', label: '上部 (ネック)' },
               { id: 'oblique_front', label: '斜め正面' },
               { id: 'oblique_back', label: '斜め背面' },
               { id: 'front_3d', label: '正面 (3D抽出)' },
@@ -1337,7 +1450,7 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
               { id: 'oblique_left', label: '斜め左' },
               { id: 'side', label: '側面' }
             ].map(opt => {
-              const status = generatingStatus[opt.id === 'front' ? 'front' : 'multiview'];
+              const status = generatingStatus[opt.id === 'front' ? 'front' : opt.id === 'top' ? 'top' : 'multiview'];
               const isFrontPreview = opt.id === 'front';
               let imageUrl = isFrontPreview ? data.generatedImages?.['front_base'] : data.generatedImages?.[opt.id];
               
