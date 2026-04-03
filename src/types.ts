@@ -63,6 +63,12 @@ export type SpecData = {
   generatedImage?: string;
   generatedImages?: Record<string, string>;
   imageQuality?: 'low' | 'medium' | 'high';
+
+  // Logo fields
+  logoText?: string;
+  generatedLogo?: string;
+  logoPosition?: 'top-center' | 'bottom-center' | 'top-left' | 'top-right';
+  logoScale?: number;
 };
 
 export const initialSpecData: SpecData = {
@@ -115,4 +121,7 @@ export const initialSpecData: SpecData = {
     { id: '2', technique: '', threadType: '', threadNumber: '', size: '', placement: '' },
     { id: '3', technique: '', threadType: '', threadNumber: '', size: '', placement: '' },
   ],
+  logoPosition: 'bottom-center',
+  logoScale: 20,
 };
+

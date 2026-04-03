@@ -16,6 +16,8 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
   const [showToast, setShowToast] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingStatus, setGeneratingStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>({});
+  const [logoGeneratingStatus, setLogoGeneratingStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [compositedImage, setCompositedImage] = useState<string | null>(null);
 
   const shapeMap: Record<string, string> = {
     pin: 'ピン型',
@@ -261,7 +263,95 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
 
   const MULTIVIEW_KEYS = ['oblique_front', 'oblique_back', 'front_3d', 'oblique_right', 'oblique_left', 'side'];
 
-  const handleGenerateImage = async () => {
+  const removeBlackBackground = (logoImgUrl: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(logoImgUrl);
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const dataArr = imgData.data;
+        for (let i = 0; i < dataArr.length; i += 4) {
+          if (dataArr[i] < 30 && dataArr[i + 1] < 30 && dataArr[i + 2] < 30) {
+            dataArr[i + 3] = 0;
+          }
+        }
+        ctx.putImageData(imgData, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.src = logoImgUrl;
+    });
+  };
+
+  useEffect(() => {
+    let isCancelled = false;
+    const composite = async () => {
+      const frontUrl = data.generatedImages?.['front_base'] || data.generatedImages?.['front'];
+      if (!frontUrl) {
+         if (!isCancelled) setCompositedImage(null);
+         return;
+      }
+      if (!data.generatedLogo) {
+         if (!isCancelled) setCompositedImage(frontUrl);
+         return;
+      }
+      
+      const transparentLogo = await removeBlackBackground(data.generatedLogo);
+      const frontImg = new Image();
+      frontImg.crossOrigin = 'anonymous';
+      frontImg.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = frontImg.width;
+        canvas.height = frontImg.height;
+        const ctx = canvas.getContext('2d');
+        if(!ctx) return;
+        ctx.drawImage(frontImg, 0, 0);
+        
+        const logoImg = new Image();
+        logoImg.crossOrigin = 'anonymous';
+        logoImg.onload = () => {
+           const scale = (data.logoScale ?? 20) / 100;
+           const logoTargetWidth = canvas.width * scale;
+           const ratio = logoImg.height / Math.max(1, logoImg.width);
+           const logoTargetHeight = logoTargetWidth * ratio;
+           
+           let x = 0;
+           let y = 0;
+           const pos = data.logoPosition || 'bottom-center';
+           const paddingX = canvas.width * 0.05;
+           const paddingY = canvas.height * 0.05;
+           
+           if (pos === 'top-left') {
+             x = paddingX; y = paddingY;
+           } else if (pos === 'top-right') {
+             x = canvas.width - logoTargetWidth - paddingX;
+             y = paddingY;
+           } else if (pos === 'top-center') {
+             x = (canvas.width - logoTargetWidth) / 2;
+             y = paddingY + canvas.height * 0.1;
+           } else if (pos === 'bottom-center') {
+             x = (canvas.width - logoTargetWidth) / 2;
+             y = canvas.height - logoTargetHeight - paddingY - canvas.height * 0.1;
+           }
+           
+           ctx.drawImage(logoImg, x, y, logoTargetWidth, logoTargetHeight);
+           if (!isCancelled) setCompositedImage(canvas.toDataURL('image/png'));
+        };
+        logoImg.src = transparentLogo;
+      };
+      frontImg.src = frontUrl;
+    };
+    
+    composite();
+    return () => { isCancelled = true; };
+  }, [data.generatedImages?.['front'], data.generatedImages?.['front_base'], data.generatedLogo, data.logoPosition, data.logoScale]);
+
+  const handleGenerateFront = async () => {
     setIsGenerating(true);
     const currentImages = { ...data.generatedImages };
     
@@ -299,12 +389,62 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       if (!frontUrl) throw new Error('Invalid frontend image format');
       
       currentImages['front'] = frontUrl;
-      updateData({ generatedImages: { ...currentImages } });
-      setGeneratingStatus({ front: 'done', multiview: 'loading' });
+      currentImages['front_base'] = frontUrl;
+      updateData({ generatedImages: { ...currentImages }, generatedLogo: undefined });
+      setGeneratingStatus({ front: 'done' });
+    } catch (e) {
+      console.error(e);
+      alert('正面画像生成中にエラーが発生しました。');
+      setGeneratingStatus({ front: 'error' });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
-      // 2. Multiview 6 Angles via Replicate
-      // Extract pure base64 for the multiview payload
-      const pureB64 = frontUrl.replace(/^data:image\/\w+;base64,/, '');
+  const handleGenerateLogo = async () => {
+    if (!data.logoText) return;
+    setLogoGeneratingStatus('loading');
+    try {
+      const prompt = `minimalist brand logo, ${data.logoText}, white symbol on pure black square background, street style golf brand, clean geometric design, no text`;
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, quality: 'low' })
+      });
+      if (!res.ok) throw new Error('Failed to generate logo');
+      const dataLogo = await res.json();
+      const b64 = dataLogo?.data?.[0]?.b64_json;
+      let logoUrl = '';
+      if (b64) {
+        logoUrl = `data:image/png;base64,${b64}`;
+      } else if (dataLogo?.data?.[0]?.url) {
+        logoUrl = dataLogo.data[0].url;
+      }
+      if (!logoUrl) throw new Error('Invalid logo format');
+      
+      updateData({ generatedLogo: logoUrl });
+      setLogoGeneratingStatus('done');
+    } catch (e) {
+      console.error(e);
+      alert('ロゴ生成中にエラーが発生しました。');
+      setLogoGeneratingStatus('error');
+    }
+  };
+
+  const handleGenerateMultiview = async (skipLogo: boolean = false) => {
+    setIsGenerating(true);
+    setGeneratingStatus(prev => ({ ...prev, multiview: 'loading' }));
+    const currentImages = { ...data.generatedImages };
+    
+    try {
+      let sourceImage = compositedImage;
+      if (skipLogo || !data.generatedLogo) {
+         sourceImage = data.generatedImages?.['front_base'] || data.generatedImages?.['front'] || null;
+      }
+      
+      if (!sourceImage) throw new Error('元の画像が存在しません。');
+
+      const pureB64 = sourceImage.replace(/^data:image\/\w+;base64,/, '');
 
       const resMulti = await fetch('/api/generate-multiview', {
         method: 'POST',
@@ -319,23 +459,28 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
       const dataMulti = await resMulti.json();
       const multiviewUrl = dataMulti.imageUrl;
 
-      // 3. Slice Image using Canvas
       const slices = await sliceImage(multiviewUrl);
       
       if (slices.length === 6) {
         MULTIVIEW_KEYS.forEach((key, idx) => {
           currentImages[key] = slices[idx];
         });
+        
+        if (!skipLogo && data.generatedLogo) {
+           currentImages['front'] = sourceImage;
+        } else {
+           currentImages['front'] = currentImages['front_base'] || currentImages['front'];
+        }
+
         updateData({ generatedImages: { ...currentImages } });
-        setGeneratingStatus({ front: 'done', multiview: 'done' });
+        setGeneratingStatus(prev => ({ ...prev, multiview: 'done' }));
       } else {
         throw new Error('Slicing failed to produce 6 images');
       }
-
     } catch (e) {
       console.error(e);
-      alert('画像生成中にエラーが発生しました。');
-      setGeneratingStatus({ front: 'error', multiview: 'error' });
+      alert('全アングル生成中にエラーが発生しました。');
+      setGeneratingStatus(prev => ({ ...prev, multiview: 'error' }));
     } finally {
       setIsGenerating(false);
     }
@@ -661,87 +806,193 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
 
       {/* AI Image Generation Section */}
       <div className="bg-white border-2 border-dashed border-indigo-200 p-6 rounded-xl flex flex-col gap-6 mt-8">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex-1 space-y-3">
-            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              <PhotoIcon className="w-5 h-5 text-indigo-500" />
-              デザイン画像一括生成
-            </h3>
-            <p className="text-sm text-gray-600">
-              選択したアングルの完成イメージ画像を順番に自動生成します。
-            </p>
-          </div>
-          <button
-            onClick={handleGenerateImage}
-            disabled={isGenerating}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed text-white font-medium py-2 px-6 rounded shadow transition-colors flex items-center justify-center gap-2 min-w-[200px]"
-          >
-            {isGenerating ? (
-              <><ArrowPathIcon className="w-4 h-4 animate-spin" /> {generatingStatus['multiview'] === 'loading' ? '6アングル生成中...' : '正面画像生成中...'}</>
-            ) : (
-              <><SparklesIcon className="w-4 h-4" /> 全アングルを一括生成</>
-            )}
-          </button>
-        </div>
         
-        {/* 画像品質選択エリア (正面ベース画像用) */}
-        <div className="bg-indigo-50 p-4 rounded-lg space-y-6">
-          <div className="">
-            <h4 className="text-sm font-bold text-indigo-900 mb-3 flex flex-col md:flex-row md:items-center justify-between gap-2">
-              <span>正面ベース画像の品質を選択:</span>
-            </h4>
-            <div className="flex flex-col lg:flex-row gap-4">
-              <label className="flex-1 flex items-start gap-3 cursor-pointer bg-white px-4 py-3 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors">
-                <input 
-                  type="radio" 
-                  name="quality"
-                  checked={data.imageQuality === 'low'}
-                  onChange={() => updateData({ imageQuality: 'low' })}
-                  className="w-4 h-4 mt-0.5 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                />
-                <div className="flex flex-col">
-                  <span className="text-sm font-bold text-gray-800">低画質 (low)</span>
-                  <span className="text-xs text-gray-500 mt-0.5">約$0.01/枚</span>
-                </div>
-              </label>
-              <label className="flex-1 flex items-start gap-3 cursor-pointer bg-white px-4 py-3 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors relative overflow-hidden">
-                {(!data.imageQuality || data.imageQuality === 'medium') && (
-                  <div className="absolute top-0 right-0 bg-indigo-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-bl">推奨</div>
-                )}
-                <input 
-                  type="radio" 
-                  name="quality"
-                  checked={!data.imageQuality || data.imageQuality === 'medium'}
-                  onChange={() => updateData({ imageQuality: 'medium' })}
-                  className="w-4 h-4 mt-0.5 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                />
-                <div className="flex flex-col">
-                  <span className="text-sm font-bold text-gray-800">中画質 (medium)</span>
-                  <span className="text-xs text-gray-500 mt-0.5">約$0.04/枚</span>
-                </div>
-              </label>
-              <label className="flex-1 flex items-start gap-3 cursor-pointer bg-white px-4 py-3 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors">
-                <input 
-                  type="radio" 
-                  name="quality"
-                  checked={data.imageQuality === 'high'}
-                  onChange={() => updateData({ imageQuality: 'high' })}
-                  className="w-4 h-4 mt-0.5 text-indigo-600 border-gray-300 focus:ring-indigo-500"
-                />
-                <div className="flex flex-col">
-                  <span className="text-sm font-bold text-gray-800">高画質 (high)</span>
-                  <span className="text-xs text-gray-500 mt-0.5">約$0.17/枚</span>
-                </div>
-              </label>
+        <div className="flex flex-col gap-2 border-b border-indigo-100 pb-4">
+          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+            <PhotoIcon className="w-5 h-5 text-indigo-500" />
+            デザイン画像生成フロー
+          </h3>
+          <p className="text-sm text-gray-600">
+            正面ベース画像の生成 → ロゴ合成 → 全アングルの順に生成します。
+          </p>
+        </div>
+
+        {/* 1. 正面画像生成 */}
+        <div className="bg-indigo-50 p-4 rounded-lg space-y-4">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex-1">
+              <h4 className="font-bold text-indigo-900 mb-1">1. 正面ベース画像生成</h4>
+              <p className="text-xs text-indigo-700">現在のパラメーターから正面のベース画像を生成します。</p>
             </div>
+            <button
+              onClick={handleGenerateFront}
+              disabled={isGenerating || generatingStatus['front'] === 'loading'}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed text-white font-medium py-2 px-6 rounded shadow transition-colors flex items-center justify-center gap-2"
+            >
+              {(isGenerating && generatingStatus['front'] === 'loading') ? (
+                <><ArrowPathIcon className="w-4 h-4 animate-spin" /> 生成中...</>
+              ) : (
+                <><SparklesIcon className="w-4 h-4" /> 正面画像を生成</>
+              )}
+            </button>
+          </div>
+          
+          <div className="flex flex-col lg:flex-row gap-4">
+            <label className="flex-1 flex items-start gap-3 cursor-pointer bg-white px-4 py-3 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors">
+              <input 
+                type="radio" 
+                name="quality"
+                checked={data.imageQuality === 'low'}
+                onChange={() => updateData({ imageQuality: 'low' })}
+                className="w-4 h-4 mt-0.5 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+              />
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-gray-800">低画質 (low)</span>
+                <span className="text-xs text-gray-500 mt-0.5">約$0.01/枚</span>
+              </div>
+            </label>
+            <label className="flex-1 flex items-start gap-3 cursor-pointer bg-white px-4 py-3 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors relative overflow-hidden">
+              {(!data.imageQuality || data.imageQuality === 'medium') && (
+                <div className="absolute top-0 right-0 bg-indigo-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-bl">推奨</div>
+              )}
+              <input 
+                type="radio" 
+                name="quality"
+                checked={!data.imageQuality || data.imageQuality === 'medium'}
+                onChange={() => updateData({ imageQuality: 'medium' })}
+                className="w-4 h-4 mt-0.5 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+              />
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-gray-800">中画質 (medium)</span>
+                <span className="text-xs text-gray-500 mt-0.5">約$0.04/枚</span>
+              </div>
+            </label>
+            <label className="flex-1 flex items-start gap-3 cursor-pointer bg-white px-4 py-3 rounded border border-indigo-100 shadow-sm hover:border-indigo-300 transition-colors">
+              <input 
+                type="radio" 
+                name="quality"
+                checked={data.imageQuality === 'high'}
+                onChange={() => updateData({ imageQuality: 'high' })}
+                className="w-4 h-4 mt-0.5 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+              />
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-gray-800">高画質 (high)</span>
+                <span className="text-xs text-gray-500 mt-0.5">約$0.17/枚</span>
+              </div>
+            </label>
           </div>
         </div>
 
+        {/* 2. ロゴ生成 */}
+        {(data.generatedImages && data.generatedImages['front_base']) && (
+          <div className="bg-gray-50 border border-gray-200 p-4 rounded-lg space-y-4 animate-fade-in fade-in">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex-1">
+                <h4 className="font-bold text-gray-800 mb-1">2. ロゴ生成（オプション）</h4>
+                <p className="text-xs text-gray-600">入力したテキストからロゴを生成し、正面画像に合成します。</p>
+              </div>
+            </div>
+            
+            <div className="flex flex-col lg:flex-row gap-6">
+              <div className="flex-1 space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">ロゴテキスト / キーワード</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      className="flex-1 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 p-2 border text-sm"
+                      placeholder="例：Golf Street Lab, GSL"
+                      value={data.logoText || ''}
+                      onChange={(e) => updateData({ logoText: e.target.value })}
+                    />
+                    <button
+                      onClick={handleGenerateLogo}
+                      disabled={logoGeneratingStatus === 'loading' || !data.logoText}
+                      className="bg-gray-800 hover:bg-gray-900 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded shadow transition-colors text-sm flex items-center whitespace-nowrap"
+                    >
+                      {logoGeneratingStatus === 'loading' ? '生成中...' : data.generatedLogo ? '再生成' : 'ロゴを生成'}
+                    </button>
+                  </div>
+                </div>
+                
+                {data.generatedLogo && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">ロゴ位置</label>
+                        <select
+                          className="w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 p-2 border text-sm"
+                          value={data.logoPosition || 'bottom-center'}
+                          onChange={(e) => updateData({ logoPosition: e.target.value as any })}
+                        >
+                          <option value="top-center">上部中央</option>
+                          <option value="bottom-center">下部中央</option>
+                          <option value="top-left">左上</option>
+                          <option value="top-right">右上</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">サイズ ({data.logoScale || 20}%)</label>
+                        <input
+                          type="range"
+                          min="10"
+                          max="40"
+                          value={data.logoScale || 20}
+                          onChange={(e) => updateData({ logoScale: parseInt(e.target.value) })}
+                          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer mt-2"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              
+              {data.generatedLogo && (
+                <div className="w-24 h-24 bg-black rounded shadow-inner flex items-center justify-center shrink-0 border border-gray-300">
+                  <img src={data.generatedLogo} alt="Generated Logo" className="max-w-full max-h-full" />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 3. 全アングル生成 */}
+        {(data.generatedImages && data.generatedImages['front_base']) && (
+          <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-lg space-y-4 animate-fade-in fade-in">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex-1">
+                <h4 className="font-bold text-indigo-900 mb-1">3. 全アングル生成</h4>
+                <p className="text-xs text-indigo-700">合成済みの正面画像から残りのアングルを立体生成します。</p>
+              </div>
+              <div className="flex flex-col gap-2 w-full md:w-auto">
+                <button
+                  onClick={() => handleGenerateMultiview(false)}
+                  disabled={isGenerating || generatingStatus['multiview'] === 'loading'}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed text-white font-medium py-2 px-6 rounded shadow transition-colors flex items-center justify-center gap-2"
+                >
+                  {(isGenerating && generatingStatus['multiview'] === 'loading') ? (
+                    <><ArrowPathIcon className="w-4 h-4 animate-spin" /> 生成中...</>
+                  ) : (
+                    <><SparklesIcon className="w-4 h-4" /> 全アングルを生成</>
+                  )}
+                </button>
+                <button
+                  onClick={() => handleGenerateMultiview(true)}
+                  disabled={isGenerating || generatingStatus['multiview'] === 'loading'}
+                  className="bg-white border text-gray-700 hover:bg-gray-50 disabled:bg-indigo-100 disabled:text-indigo-300 disabled:border-indigo-200 disabled:cursor-not-allowed font-medium py-1 px-4 rounded shadow-sm transition-colors text-xs text-center"
+                >
+                  ロゴなしで全アングル生成
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* プレビューエリア (2列グリッド) */}
-        {(isGenerating || (data.generatedImages && data.generatedImages['front'])) && (
+        {(isGenerating || (data.generatedImages && data.generatedImages['front_base'])) && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
             {[
-              { id: 'front', label: '正面 (オリジナル高画質)' },
+              { id: 'front', label: '正面 (合成プレビュー)' },
               { id: 'oblique_front', label: '斜め正面' },
               { id: 'oblique_back', label: '斜め背面' },
               { id: 'front_3d', label: '正面 (3D抽出)' },
@@ -750,11 +1001,12 @@ export default function Step2({ data, updateData, onNext, onBack }: Props) {
               { id: 'side', label: '側面' }
             ].map(opt => {
               const status = generatingStatus[opt.id === 'front' ? 'front' : 'multiview'];
-              const imageUrl = data.generatedImages?.[opt.id];
+              const isFrontPreview = opt.id === 'front';
+              let imageUrl = isFrontPreview ? compositedImage || data.generatedImages?.['front_base'] : data.generatedImages?.[opt.id];
               
               return (
                 <div key={opt.id} className="w-full h-48 bg-gray-100 rounded border border-gray-200 flex flex-col overflow-hidden relative group">
-                  <div className="absolute top-2 left-2 bg-black/60 text-white text-xs font-bold px-2 py-1 rounded z-10">
+                  <div className="absolute top-2 left-2 bg-black/60 text-white text-xs font-bold px-2 py-1 rounded z-10 flex items-center gap-1">
                     {opt.label}
                   </div>
                   
